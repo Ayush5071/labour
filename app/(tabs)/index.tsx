@@ -1,98 +1,134 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, RefreshControl, Alert } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useState, useCallback } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { workerApi } from '../../services/api';
+import { Worker } from '../../types';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+export default function WorkersScreen() {
+  const router = useRouter();
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-export default function HomeScreen() {
+  const fetchWorkers = async () => {
+    try {
+      setLoading(true);
+      const response = await workerApi.getAll(true);
+      setWorkers(response.data);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to fetch workers');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchWorkers();
+    }, [])
+  );
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchWorkers();
+  };
+
+  const handleDelete = (id: string, name: string) => {
+    Alert.alert(
+      'Deactivate Worker',
+      `Are you sure you want to deactivate ${name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Deactivate',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await workerApi.delete(id);
+              fetchWorkers();
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to deactivate worker');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const renderWorkerItem = ({ item }: { item: Worker }) => (
+    <TouchableOpacity
+      className="bg-white mx-4 my-2 p-4 rounded-xl shadow-sm border border-gray-100"
+      onPress={() => router.push(`/worker/details/${item._id}`)}
+    >
+      <View className="flex-row justify-between items-start">
+        <View className="flex-1">
+          <Text className="text-lg font-bold text-gray-800">{item.name}</Text>
+          <Text className="text-sm text-gray-500">ID: {item.workerId}</Text>
+          <View className="flex-row mt-2 flex-wrap">
+            <View className="bg-blue-100 px-2 py-1 rounded mr-2 mb-1">
+              <Text className="text-xs text-blue-700">₹{item.dailyPay}/day</Text>
+            </View>
+            <View className="bg-green-100 px-2 py-1 rounded mr-2 mb-1">
+              <Text className="text-xs text-green-700">{item.dailyWorkingHours}h/day</Text>
+            </View>
+            <View className="bg-orange-100 px-2 py-1 rounded mb-1">
+              <Text className="text-xs text-orange-700">OT: {item.overtimeRate}x</Text>
+            </View>
+          </View>
+        </View>
+        <View className="flex-row">
+          <TouchableOpacity
+            className="p-2"
+            onPress={() => router.push(`/worker/${item._id}`)}
+          >
+            <Ionicons name="pencil" size={20} color="#3B82F6" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="p-2"
+            onPress={() => handleDelete(item._id, item.name)}
+          >
+            <Ionicons name="trash" size={20} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+      </View>
+      <View className="flex-row justify-between mt-3 pt-3 border-t border-gray-100">
+        <Text className="text-xs text-gray-500">
+          Total Earnings: <Text className="font-bold text-green-600">₹{item.totalEarnings.toFixed(2)}</Text>
+        </Text>
+        <Text className="text-xs text-gray-500">
+          OT Hours: <Text className="font-bold text-orange-600">{item.totalOvertimeHours.toFixed(1)}h</Text>
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
-
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+    <View className="flex-1 bg-gray-50">
+      <FlatList
+        data={workers}
+        renderItem={renderWorkerItem}
+        keyExtractor={(item: Worker) => item._id}
+        contentContainerStyle={{ paddingVertical: 8 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListEmptyComponent={
+          <View className="flex-1 items-center justify-center py-20">
+            <Ionicons name="people-outline" size={64} color="#D1D5DB" />
+            <Text className="text-gray-400 mt-4 text-center">
+              {loading ? 'Loading workers...' : 'No workers found.\nAdd your first worker!'}
+            </Text>
+          </View>
+        }
+      />
+      <TouchableOpacity
+        className="absolute bottom-6 right-6 bg-blue-500 w-14 h-14 rounded-full items-center justify-center shadow-lg"
+        onPress={() => router.push('/worker/add')}
+      >
+        <Ionicons name="add" size={32} color="#fff" />
+      </TouchableOpacity>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-});

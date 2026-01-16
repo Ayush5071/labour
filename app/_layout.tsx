@@ -1,24 +1,40 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import "../global.css";
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <>
+      <StatusBar style="dark" />
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+        <Stack.Screen 
+          name="worker/add" 
+          options={{ 
+            title: 'Add Worker',
+            presentation: 'modal',
+            headerStyle: { backgroundColor: '#3B82F6' },
+            headerTintColor: '#fff',
+          }} 
+        />
+        <Stack.Screen 
+          name="worker/[id]" 
+          options={{ 
+            title: 'Edit Worker',
+            presentation: 'modal',
+            headerStyle: { backgroundColor: '#3B82F6' },
+            headerTintColor: '#fff',
+          }} 
+        />
+        <Stack.Screen 
+          name="worker/details/[id]" 
+          options={{ 
+            title: 'Worker Details',
+            headerStyle: { backgroundColor: '#3B82F6' },
+            headerTintColor: '#fff',
+          }} 
+        />
       </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    </>
   );
 }
