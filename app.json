@@ -46,7 +46,7 @@
       "reactCompiler": true
     },
     "extra": {
-      "API_BASE_URL": "http://localhost:3000/api",
+      "API_BASE_URL": "https://server-labour-steel.vercel.app/api",
       "router": {},
       "eas": {
         "projectId": "a4a505f3-193f-437e-9b18-d926463eb1dd"
