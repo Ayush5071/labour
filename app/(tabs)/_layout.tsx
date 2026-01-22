@@ -17,6 +17,9 @@ export default function TabLayout() {
           paddingBottom: 8,
           paddingTop: 8,
         },
+        tabBarLabelStyle: {
+          fontSize: 10,
+        },
       }}
     >
       <Tabs.Screen
@@ -24,25 +27,43 @@ export default function TabLayout() {
         options={{
           title: 'Workers',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="people" size={size} color={color} />
+            <Ionicons name="people" size={size - 2} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="daily-entry"
         options={{
-          title: 'Daily Entry',
+          title: 'Daily',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar" size={size} color={color} />
+            <Ionicons name="calendar" size={size - 2} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="payments"
         options={{
-          title: 'Payments',
+          title: 'Advance',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cash" size={size} color={color} />
+            <Ionicons name="card" size={size - 2} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="vault"
+        options={{
+          title: 'Vault',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="wallet" size={size - 2} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="bonus"
+        options={{
+          title: 'Bonus',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="gift" size={size - 2} color={color} />
           ),
         }}
       />
@@ -51,14 +72,8 @@ export default function TabLayout() {
         options={{
           title: 'Reports',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="document-text" size={size} color={color} />
+            <Ionicons name="document-text" size={size - 2} color={color} />
           ),
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          href: null,
         }}
       />
     </Tabs>

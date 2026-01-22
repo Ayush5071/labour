@@ -2,7 +2,7 @@ import { View, Text, FlatList, TouchableOpacity, RefreshControl, Alert } from 'r
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { workerApi } from '../../services/api';
+import { workersApi } from '../../services/api';
 import { Worker } from '../../types';
 
 export default function WorkersScreen() {
@@ -14,7 +14,7 @@ export default function WorkersScreen() {
   const fetchWorkers = async () => {
     try {
       setLoading(true);
-      const response = await workerApi.getAll(true);
+      const response = await workersApi.getAll(true);
       setWorkers(response.data);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to fetch workers');
@@ -46,7 +46,7 @@ export default function WorkersScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await workerApi.delete(id);
+              await workersApi.delete(id);
               fetchWorkers();
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to deactivate worker');
@@ -59,58 +59,63 @@ export default function WorkersScreen() {
 
   const renderWorkerItem = ({ item }: { item: Worker }) => (
     <TouchableOpacity
-      className="bg-white mx-4 my-2 p-4 rounded-xl shadow-sm border border-gray-100"
+      className="bg-white mx-3 my-1 px-3 py-2 rounded-lg border border-gray-100 flex-row items-center justify-between"
       onPress={() => router.push(`/worker/details/${item._id}`)}
     >
-      <View className="flex-row justify-between items-start">
+      <View className="flex-1 flex-row items-center">
+        <View className="w-9 h-9 bg-blue-100 rounded-full items-center justify-center mr-2">
+          <Text className="text-blue-600 font-bold text-sm">{item.name.charAt(0).toUpperCase()}</Text>
+        </View>
         <View className="flex-1">
-          <Text className="text-lg font-bold text-gray-800">{item.name}</Text>
-          <Text className="text-sm text-gray-500">ID: {item.workerId}</Text>
-          <View className="flex-row mt-2 flex-wrap">
-            <View className="bg-blue-100 px-2 py-1 rounded mr-2 mb-1">
-              <Text className="text-xs text-blue-700">₹{item.dailyPay}/day</Text>
-            </View>
-            <View className="bg-green-100 px-2 py-1 rounded mr-2 mb-1">
-              <Text className="text-xs text-green-700">{item.dailyWorkingHours}h/day</Text>
-            </View>
-            <View className="bg-orange-100 px-2 py-1 rounded mb-1">
-              <Text className="text-xs text-orange-700">OT: {item.overtimeRate}x</Text>
-            </View>
+          <Text className="font-semibold text-gray-800 text-sm" numberOfLines={1}>{item.name}</Text>
+          <View className="flex-row items-center mt-0.5">
+            <Text className="text-xs text-gray-500">₹{item.hourlyRate}/hr</Text>
+            {(item.advanceBalance || 0) > 0 && (
+              <Text className="text-xs text-red-500 ml-2">Adv: ₹{item.advanceBalance}</Text>
+            )}
           </View>
         </View>
-        <View className="flex-row">
-          <TouchableOpacity
-            className="p-2"
-            onPress={() => router.push(`/worker/${item._id}`)}
-          >
-            <Ionicons name="pencil" size={20} color="#3B82F6" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            className="p-2"
-            onPress={() => handleDelete(item._id, item.name)}
-          >
-            <Ionicons name="trash" size={20} color="#EF4444" />
-          </TouchableOpacity>
-        </View>
       </View>
-      <View className="flex-row justify-between mt-3 pt-3 border-t border-gray-100">
-        <Text className="text-xs text-gray-500">
-          Total Earnings: <Text className="font-bold text-green-600">₹{item.totalEarnings.toFixed(2)}</Text>
-        </Text>
-        <Text className="text-xs text-gray-500">
-          OT Hours: <Text className="font-bold text-orange-600">{item.totalOvertimeHours.toFixed(1)}h</Text>
-        </Text>
+      <View className="flex-row items-center">
+        <View className="items-end mr-2">
+          <Text className="text-xs text-green-600">{item.totalDaysWorked || 0}d</Text>
+          <Text className="text-xs text-red-500">{item.totalDaysAbsent || 0}a</Text>
+        </View>
+        <TouchableOpacity
+          className="p-1.5"
+          onPress={() => router.push(`/worker/${item._id}`)}
+        >
+          <Ionicons name="pencil" size={16} color="#3B82F6" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          className="p-1.5"
+          onPress={() => handleDelete(item._id, item.name)}
+        >
+          <Ionicons name="trash" size={16} color="#EF4444" />
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
 
   return (
     <View className="flex-1 bg-gray-50">
+      {/* Summary Header */}
+      <View className="bg-blue-500 mx-3 mt-3 p-3 rounded-lg flex-row justify-between">
+        <View>
+          <Text className="text-blue-100 text-xs">Total Workers</Text>
+          <Text className="text-white text-xl font-bold">{workers.length}</Text>
+        </View>
+        <View className="items-end">
+          <Text className="text-blue-100 text-xs">With Advances</Text>
+          <Text className="text-white text-xl font-bold">{workers.filter(w => (w.advanceBalance || 0) > 0).length}</Text>
+        </View>
+      </View>
+
       <FlatList
         data={workers}
         renderItem={renderWorkerItem}
         keyExtractor={(item: Worker) => item._id}
-        contentContainerStyle={{ paddingVertical: 8 }}
+        contentContainerStyle={{ paddingVertical: 4 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }

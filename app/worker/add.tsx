@@ -2,7 +2,7 @@ import { View, Text, TextInput, ScrollView, TouchableOpacity, Alert } from 'reac
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { workerApi } from '../../services/api';
+import { workersApi } from '../../services/api';
 
 export default function AddWorkerScreen() {
   const router = useRouter();
@@ -12,8 +12,7 @@ export default function AddWorkerScreen() {
     workerId: '',
     name: '',
     dailyWorkingHours: '8',
-    dailyPay: '',
-    overtimeRate: '1.5',
+    hourlyRate: '',
     bankName: '',
     accountNumber: '',
     ifscCode: '',
@@ -24,8 +23,7 @@ export default function AddWorkerScreen() {
       workerId: '',
       name: '',
       dailyWorkingHours: '8',
-      dailyPay: '',
-      overtimeRate: '1.5',
+      hourlyRate: '',
       bankName: '',
       accountNumber: '',
       ifscCode: '',
@@ -42,19 +40,18 @@ export default function AddWorkerScreen() {
       Alert.alert('Error', 'Name is required');
       return;
     }
-    if (!formData.dailyPay || isNaN(parseFloat(formData.dailyPay))) {
-      Alert.alert('Error', 'Valid daily pay is required');
+    if (!formData.hourlyRate || isNaN(parseFloat(formData.hourlyRate))) {
+      Alert.alert('Error', 'Valid hourly rate is required');
       return;
     }
 
     try {
       setLoading(true);
-      await workerApi.create({
+      await workersApi.create({
         workerId: formData.workerId.trim(),
         name: formData.name.trim(),
         dailyWorkingHours: parseFloat(formData.dailyWorkingHours) || 8,
-        dailyPay: parseFloat(formData.dailyPay),
-        overtimeRate: parseFloat(formData.overtimeRate) || 1.5,
+        hourlyRate: parseFloat(formData.hourlyRate),
         bankDetails: {
           bankName: formData.bankName.trim() || undefined,
           accountNumber: formData.accountNumber.trim() || undefined,
@@ -139,31 +136,19 @@ export default function AddWorkerScreen() {
           
           <View className="mb-4">
             <Text className="text-sm font-medium text-gray-700 mb-1">
-              Daily Pay (₹) <Text className="text-red-500">*</Text>
+              Hourly Rate (₹/hr) <Text className="text-red-500">*</Text>
             </Text>
             <TextInput
               className="border border-gray-300 rounded-lg px-3 py-3 text-gray-800 bg-white"
-              value={formData.dailyPay}
-              onChangeText={(text: any) => setFormData(prev => ({ ...prev, dailyPay: text }))}
-              placeholder="Enter daily pay amount"
-              keyboardType="decimal-pad"
-              placeholderTextColor="#9CA3AF"
-            />
-          </View>
-          
-          <View className="mb-4">
-            <Text className="text-sm font-medium text-gray-700 mb-1">Overtime Rate Multiplier</Text>
-            <TextInput
-              className="border border-gray-300 rounded-lg px-3 py-3 text-gray-800 bg-white"
-              value={formData.overtimeRate}
-              onChangeText={(text: any) => setFormData(prev => ({ ...prev, overtimeRate: text }))}
-              placeholder="1.5"
+              value={formData.hourlyRate}
+              onChangeText={(text: any) => setFormData(prev => ({ ...prev, hourlyRate: text }))}
+              placeholder="Enter hourly rate"
               keyboardType="decimal-pad"
               placeholderTextColor="#9CA3AF"
             />
           </View>
           <Text className="text-xs text-gray-500 -mt-2">
-            Overtime pay = (Daily Pay ÷ Hours) × OT Hours × {formData.overtimeRate || '1.5'}
+            Daily pay = Hourly Rate × Daily Hours
           </Text>
         </View>
 

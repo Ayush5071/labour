@@ -1,121 +1,191 @@
-import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, FlatList } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, RefreshControl, Platform } from 'react-native';
+import { useState, useCallback } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { workerApi, entryApi } from '../../services/api';
-import { Worker } from '../../types';
+import { entryApi } from '../../services/api';
+import { DailyWorkersData } from '../../types';
+
+interface WorkerEntry {
+  workerId: string;
+  name: string;
+  hourlyRate: number;
+  dailyWorkingHours: number;
+  status: 'present' | 'absent' | 'holiday' | 'half-day';
+  hoursWorked: string;
+  totalPay: number;
+  hasEntry: boolean;
+}
 
 export default function DailyEntryScreen() {
-  const [workers, setWorkers] = useState<Worker[]>([]);
-  const [filteredWorkers, setFilteredWorkers] = useState<Worker[]>([]);
-  const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [hoursWorked, setHoursWorked] = useState('');
-  const [notes, setNotes] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showWorkerModal, setShowWorkerModal] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [entries, setEntries] = useState<WorkerEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showSuccessToast, setShowSuccessToast] = useState(false);
-  const [calculatedPay, setCalculatedPay] = useState<{
-    regularHours: number;
-    overtimeHours: number;
-    regularPay: number;
-    overtimePay: number;
-    totalPay: number;
-  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [isHoliday, setIsHoliday] = useState(false);
+  const [holidayName, setHolidayName] = useState('');
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Web date inputs
+  const [webDay, setWebDay] = useState(selectedDate.getDate().toString());
+  const [webMonth, setWebMonth] = useState((selectedDate.getMonth() + 1).toString());
+  const [webYear, setWebYear] = useState(selectedDate.getFullYear().toString());
+
+  // Toast
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage(message);
+    setToastType(type);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   useFocusEffect(
     useCallback(() => {
-      fetchWorkers();
-    }, [])
+      fetchDailyData();
+    }, [selectedDate])
   );
 
-  useEffect(() => {
-    // Filter workers based on search query
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      const filtered = workers.filter(
-        (w) =>
-          w.name.toLowerCase().includes(query) ||
-          w.workerId.toLowerCase().includes(query)
-      );
-      setFilteredWorkers(filtered);
-    } else {
-      setFilteredWorkers(workers);
-    }
-  }, [searchQuery, workers]);
-
-  const fetchWorkers = async () => {
-    try {
-      const response = await workerApi.getAll(true);
-      setWorkers(response.data);
-      setFilteredWorkers(response.data);
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to fetch workers');
-    }
-  };
-
-  useEffect(() => {
-    calculatePay();
-  }, [selectedWorker, hoursWorked]);
-
-  const calculatePay = () => {
-    if (!selectedWorker || !hoursWorked || isNaN(parseFloat(hoursWorked))) {
-      setCalculatedPay(null);
-      return;
-    }
-
-    const hours = parseFloat(hoursWorked);
-    const regularHours = Math.min(hours, selectedWorker.dailyWorkingHours);
-    const overtimeHours = Math.max(0, hours - selectedWorker.dailyWorkingHours);
-    const hourlyRate = selectedWorker.dailyPay / selectedWorker.dailyWorkingHours;
-    const regularPay = regularHours * hourlyRate;
-    const overtimePay = overtimeHours * hourlyRate * selectedWorker.overtimeRate;
-    const totalPay = regularPay + overtimePay;
-
-    setCalculatedPay({
-      regularHours,
-      overtimeHours,
-      regularPay,
-      overtimePay,
-      totalPay,
-    });
-  };
-
-  const handleSubmit = async () => {
-    if (!selectedWorker) {
-      Alert.alert('Error', 'Please select a worker');
-      return;
-    }
-    if (!hoursWorked || isNaN(parseFloat(hoursWorked)) || parseFloat(hoursWorked) <= 0) {
-      Alert.alert('Error', 'Please enter valid hours worked');
-      return;
-    }
-
+  const fetchDailyData = async () => {
     try {
       setLoading(true);
-      await entryApi.create({
-        workerId: selectedWorker._id,
-        date: selectedDate.toISOString(),
-        hoursWorked: parseFloat(hoursWorked),
-        notes: notes.trim() || undefined,
+      const dateStr = selectedDate.toISOString().split('T')[0];
+      const response = await entryApi.getDaily(dateStr);
+      const data: DailyWorkersData = response.data;
+
+      setIsHoliday(data.isHoliday);
+      if (data.holiday) {
+        setHolidayName(data.holiday.name);
+      }
+
+      const workerEntries: WorkerEntry[] = data.workers.map((w) => {
+        if (w.entry) {
+          return {
+            workerId: w.worker._id,
+            name: w.worker.name,
+            hourlyRate: w.worker.hourlyRate,
+            dailyWorkingHours: w.worker.dailyWorkingHours,
+            status: w.entry.status,
+            hoursWorked: w.entry.hoursWorked.toString(),
+            totalPay: w.entry.totalPay,
+            hasEntry: true,
+          };
+        }
+        return {
+          workerId: w.worker._id,
+          name: w.worker.name,
+          hourlyRate: w.worker.hourlyRate,
+          dailyWorkingHours: w.worker.dailyWorkingHours,
+          status: 'present',
+          hoursWorked: w.worker.dailyWorkingHours.toString(),
+          totalPay: w.worker.hourlyRate * w.worker.dailyWorkingHours,
+          hasEntry: false,
+        };
       });
 
-      // Show success toast
-      setShowSuccessToast(true);
-      setTimeout(() => setShowSuccessToast(false), 3000);
-
-      // Reset form
-      setSelectedWorker(null);
-      setHoursWorked('');
-      setNotes('');
-      setCalculatedPay(null);
+      setEntries(workerEntries);
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to create entry');
+      Alert.alert('Error', error.message || 'Failed to fetch data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const updateEntry = (index: number, field: string, value: any) => {
+    const updated = [...entries];
+    updated[index] = { ...updated[index], [field]: value };
+
+    // Recalculate pay
+    if (field === 'hoursWorked' || field === 'status') {
+      const entry = updated[index];
+      const hours = parseFloat(entry.hoursWorked) || 0;
+      const hourlyRate = entry.hourlyRate;
+
+      if (entry.status === 'present' || entry.status === 'holiday') {
+        entry.totalPay = hours * hourlyRate;
+      } else if (entry.status === 'half-day') {
+        entry.totalPay = hourlyRate * (entry.dailyWorkingHours / 2);
+        entry.hoursWorked = (entry.dailyWorkingHours / 2).toString();
+      } else {
+        entry.totalPay = 0;
+        entry.hoursWorked = '0';
+      }
+    }
+
+    setEntries(updated);
+  };
+
+  const markAllPresent = () => {
+    const updated = entries.map((e) => ({
+      ...e,
+      status: 'present' as const,
+      hoursWorked: e.dailyWorkingHours.toString(),
+      totalPay: e.hourlyRate * e.dailyWorkingHours,
+    }));
+    setEntries(updated);
+  };
+
+  const markAllAbsent = () => {
+    const updated = entries.map((e) => ({
+      ...e,
+      status: 'absent' as const,
+      hoursWorked: '0',
+      totalPay: 0,
+    }));
+    setEntries(updated);
+  };
+
+  const handleMarkHoliday = async () => {
+    if (!holidayName.trim()) {
+      Alert.alert('Error', 'Please enter holiday name');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await entryApi.markHoliday({
+        date: selectedDate.toISOString().split('T')[0],
+        holidayName: holidayName.trim(),
+      });
+      setShowHolidayModal(false);
+      fetchDailyData();
+      showNotification('Holiday marked for all workers', 'success');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to mark holiday');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const entriesToSave = entries.map((e) => ({
+        workerId: e.workerId,
+        status: e.status,
+        hoursWorked: parseFloat(e.hoursWorked) || 0,
+      }));
+
+      await entryApi.bulkCreate({
+        date: selectedDate.toISOString().split('T')[0],
+        entries: entriesToSave,
+      });
+
+      showNotification('Entries saved successfully', 'success');
+      fetchDailyData();
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to save entries');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -128,252 +198,332 @@ export default function DailyEntryScreen() {
     });
   };
 
-  const handleDateChange = (event: any, date?: Date) => {
-    setShowDatePicker(false);
+  const changeDate = (days: number) => {
+    const newDate = new Date(selectedDate);
+    newDate.setDate(newDate.getDate() + days);
+    setSelectedDate(newDate);
+    setWebDay(newDate.getDate().toString());
+    setWebMonth((newDate.getMonth() + 1).toString());
+    setWebYear(newDate.getFullYear().toString());
+  };
+
+  const onDateChange = (event: any, date?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
     if (date) {
       setSelectedDate(date);
+      setWebDay(date.getDate().toString());
+      setWebMonth((date.getMonth() + 1).toString());
+      setWebYear(date.getFullYear().toString());
     }
   };
 
-  const renderWorkerItem = ({ item }: { item: Worker }) => (
-    <TouchableOpacity
-      className={`p-4 border-b border-gray-100 ${
-        selectedWorker?._id === item._id ? 'bg-blue-50' : ''
-      }`}
-      onPress={() => {
-        setSelectedWorker(item);
-        setShowWorkerModal(false);
-        setSearchQuery('');
-      }}
-    >
-      <View className="flex-row justify-between items-center">
-        <View className="flex-1">
-          <Text className="font-semibold text-gray-800 text-base">{item.name}</Text>
-          <Text className="text-sm text-gray-500 mt-1">ID: {item.workerId}</Text>
-        </View>
-        <View className="items-end">
-          <Text className="text-sm font-medium text-green-600">₹{item.dailyPay}/day</Text>
-          <Text className="text-xs text-gray-400">{item.dailyWorkingHours}h/day</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
+  const openDateModal = () => {
+    setWebDay(selectedDate.getDate().toString());
+    setWebMonth((selectedDate.getMonth() + 1).toString());
+    setWebYear(selectedDate.getFullYear().toString());
+    setShowDateModal(true);
+  };
+
+  const applyWebDate = () => {
+    const day = parseInt(webDay);
+    const month = parseInt(webMonth);
+    const year = parseInt(webYear);
+
+    if (isNaN(day) || isNaN(month) || isNaN(year)) {
+      showNotification('Please enter valid numbers for date', 'error');
+      return;
+    }
+    if (month < 1 || month > 12) {
+      showNotification('Month must be between 1 and 12', 'error');
+      return;
+    }
+    if (year < 2000 || year > 2100) {
+      showNotification('Year must be between 2000 and 2100', 'error');
+      return;
+    }
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) {
+      showNotification(`Day must be between 1 and ${daysInMonth} for this month`, 'error');
+      return;
+    }
+
+    const newDate = new Date(year, month - 1, day);
+    if (isNaN(newDate.getTime())) {
+      showNotification('Invalid date. Please check your input.', 'error');
+      return;
+    }
+
+    setSelectedDate(newDate);
+    setShowDateModal(false);
+  };
+
+  const totalPay = entries.reduce((sum, e) => sum + e.totalPay, 0);
+  const presentCount = entries.filter((e) => e.status === 'present' || e.status === 'holiday').length;
+  const absentCount = entries.filter((e) => e.status === 'absent').length;
 
   return (
     <View className="flex-1 bg-gray-50">
-      {/* Success Toast */}
-      {showSuccessToast && (
-        <View className="absolute top-4 left-4 right-4 z-50 bg-green-500 p-4 rounded-xl flex-row items-center shadow-lg">
-          <Ionicons name="checkmark-circle" size={24} color="#fff" />
-          <Text className="text-white font-semibold ml-2 flex-1">Entry recorded successfully!</Text>
-          <TouchableOpacity onPress={() => setShowSuccessToast(false)}>
-            <Ionicons name="close" size={20} color="#fff" />
+      {/* Toast */}
+      {showToast && (
+        <View className={`absolute top-4 left-4 right-4 z-50 p-3 rounded-lg flex-row items-center shadow-lg ${toastType === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+          <Ionicons name={toastType === 'success' ? 'checkmark-circle' : 'alert-circle'} size={20} color="#fff" />
+          <Text className="text-white font-semibold ml-2 flex-1 text-sm">{toastMessage}</Text>
+          <TouchableOpacity onPress={() => setShowToast(false)}>
+            <Ionicons name="close" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
       )}
 
-      <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
-        <View className="p-4">
-          {/* Worker Selection Card */}
-          <View className="bg-white rounded-xl p-4 mb-4 shadow-sm">
-            <Text className="text-sm font-semibold text-gray-600 mb-2">Select Worker</Text>
-            <TouchableOpacity
-              className="border border-gray-200 rounded-lg p-3 flex-row justify-between items-center bg-gray-50"
-              onPress={() => setShowWorkerModal(true)}
-            >
-              {selectedWorker ? (
-                <View className="flex-row items-center flex-1">
-                  <View className="bg-blue-100 w-10 h-10 rounded-full items-center justify-center mr-3">
-                    <Text className="text-blue-600 font-bold">{selectedWorker.name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <View>
-                    <Text className="text-gray-800 font-medium">{selectedWorker.name}</Text>
-                    <Text className="text-xs text-gray-500">{selectedWorker.workerId}</Text>
-                  </View>
-                </View>
-              ) : (
-                <Text className="text-gray-400">Tap to select a worker</Text>
-              )}
-              <Ionicons name="chevron-forward" size={20} color="#6B7280" />
-            </TouchableOpacity>
+      {/* Date Selector */}
+      <View className="bg-white px-4 py-3 flex-row items-center justify-between border-b border-gray-200">
+        <TouchableOpacity onPress={() => changeDate(-1)} className="p-2">
+          <Ionicons name="chevron-back" size={24} color="#3B82F6" />
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          onPress={() => Platform.OS === 'web' ? openDateModal() : setShowDatePicker(true)}
+          className="flex-row items-center bg-blue-50 px-4 py-2 rounded-lg"
+        >
+          <Ionicons name="calendar" size={18} color="#3B82F6" />
+          <Text className="ml-2 text-blue-600 font-semibold">{formatDate(selectedDate)}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => changeDate(1)} className="p-2">
+          <Ionicons name="chevron-forward" size={24} color="#3B82F6" />
+        </TouchableOpacity>
+      </View>
+
+      {showDatePicker && Platform.OS !== 'web' && (
+        <DateTimePicker
+          value={selectedDate}
+          mode="date"
+          display={Platform.OS === 'android' ? 'calendar' : 'default'}
+          onChange={onDateChange}
+        />
+      )}
+
+      {/* Summary Bar */}
+      <View className="bg-white px-4 py-2 flex-row justify-between border-b border-gray-200">
+        <View className="flex-row items-center">
+          <View className="bg-green-100 px-2 py-1 rounded mr-2">
+            <Text className="text-green-700 text-xs font-medium">P: {presentCount}</Text>
           </View>
-
-          {/* Date Selection */}
-          <View className="bg-white rounded-xl p-4 mb-4 shadow-sm">
-            <Text className="text-sm font-semibold text-gray-600 mb-2">Date</Text>
-            <TouchableOpacity
-              className="border border-gray-200 rounded-lg p-3 flex-row justify-between items-center bg-gray-50"
-              onPress={() => setShowDatePicker(true)}
-            >
-              <View className="flex-row items-center">
-                <View className="bg-blue-100 w-10 h-10 rounded-full items-center justify-center mr-3">
-                  <Ionicons name="calendar" size={20} color="#3B82F6" />
-                </View>
-                <Text className="text-gray-800 font-medium">{formatDate(selectedDate)}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#6B7280" />
-            </TouchableOpacity>
+          <View className="bg-red-100 px-2 py-1 rounded">
+            <Text className="text-red-700 text-xs font-medium">A: {absentCount}</Text>
           </View>
-
-          {/* Native Date Picker */}
-          {showDatePicker && (
-            <DateTimePicker
-              value={selectedDate}
-              mode="date"
-              display="default"
-              onChange={handleDateChange}
-            />
-          )}
-
-          {/* Hours Worked */}
-          <View className="bg-white rounded-xl p-4 mb-4 shadow-sm">
-            <Text className="text-sm font-semibold text-gray-600 mb-2">Hours Worked</Text>
-            <View className="flex-row items-center border border-gray-200 rounded-lg bg-gray-50">
-              <View className="bg-blue-100 w-12 h-12 rounded-l-lg items-center justify-center">
-                <Ionicons name="time" size={20} color="#3B82F6" />
-              </View>
-              <TextInput
-                className="flex-1 px-3 py-3 text-gray-800"
-                placeholder="Enter hours (e.g., 8.5)"
-                keyboardType="decimal-pad"
-                value={hoursWorked}
-                onChangeText={setHoursWorked}
-                placeholderTextColor="#9CA3AF"
-              />
-            </View>
-            {selectedWorker && (
-              <Text className="text-xs text-gray-500 mt-2">
-                📋 Standard: {selectedWorker.dailyWorkingHours}h/day | OT Rate: {selectedWorker.overtimeRate}x
-              </Text>
-            )}
-          </View>
-
-          {/* Notes */}
-          <View className="bg-white rounded-xl p-4 mb-4 shadow-sm">
-            <Text className="text-sm font-semibold text-gray-600 mb-2">Notes (Optional)</Text>
-            <TextInput
-              className="border border-gray-200 rounded-lg p-3 text-gray-800 bg-gray-50 min-h-[60px]"
-              placeholder="Add any notes about this entry..."
-              multiline
-              numberOfLines={2}
-              value={notes}
-              onChangeText={setNotes}
-              textAlignVertical="top"
-              placeholderTextColor="#9CA3AF"
-            />
-          </View>
-
-          {/* Pay Calculation Preview */}
-          {calculatedPay && (
-            <View className="bg-blue-50 rounded-xl p-4 mb-4 border border-blue-100">
-              <View className="flex-row items-center mb-3">
-                <Ionicons name="calculator" size={20} color="#3B82F6" />
-                <Text className="text-sm font-bold text-blue-800 ml-2">Pay Calculation</Text>
-              </View>
-
-              <View className="bg-white rounded-lg p-3 mb-2">
-                <View className="flex-row justify-between mb-2">
-                  <Text className="text-sm text-gray-600">Regular Hours:</Text>
-                  <Text className="text-sm font-medium">{calculatedPay.regularHours.toFixed(1)}h</Text>
-                </View>
-                <View className="flex-row justify-between">
-                  <Text className="text-sm text-gray-600">Regular Pay:</Text>
-                  <Text className="text-sm font-medium text-green-600">₹{calculatedPay.regularPay.toFixed(2)}</Text>
-                </View>
-              </View>
-
-              {calculatedPay.overtimeHours > 0 && (
-                <View className="bg-orange-50 rounded-lg p-3 mb-2">
-                  <View className="flex-row justify-between mb-2">
-                    <Text className="text-sm text-gray-600">Overtime Hours:</Text>
-                    <Text className="text-sm font-medium text-orange-600">{calculatedPay.overtimeHours.toFixed(1)}h</Text>
-                  </View>
-                  <View className="flex-row justify-between">
-                    <Text className="text-sm text-gray-600">OT Pay ({selectedWorker?.overtimeRate}x):</Text>
-                    <Text className="text-sm font-medium text-orange-600">₹{calculatedPay.overtimePay.toFixed(2)}</Text>
-                  </View>
-                </View>
-              )}
-
-              <View className="bg-blue-500 rounded-lg p-3 flex-row justify-between items-center">
-                <Text className="font-bold text-white">Total Pay</Text>
-                <Text className="font-bold text-white text-xl">₹{calculatedPay.totalPay.toFixed(2)}</Text>
-              </View>
-            </View>
-          )}
-
-          {/* Submit Button */}
-          <TouchableOpacity
-            className={`rounded-xl p-4 items-center flex-row justify-center ${loading ? 'bg-gray-400' : 'bg-blue-500'}`}
-            onPress={handleSubmit}
-            disabled={loading}
-          >
-            {loading ? (
-              <Text className="text-white font-bold text-lg">Submitting...</Text>
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle" size={24} color="#fff" />
-                <Text className="text-white font-bold text-lg ml-2">Submit Entry</Text>
-              </>
-            )}
-          </TouchableOpacity>
         </View>
+        <Text className="text-gray-700 font-semibold">Total: ₹{totalPay.toLocaleString()}</Text>
+      </View>
+
+      {/* Quick Actions */}
+      <View className="bg-white px-4 py-2 flex-row justify-between border-b border-gray-200">
+        <TouchableOpacity onPress={markAllPresent} className="bg-green-500 px-3 py-1.5 rounded">
+          <Text className="text-white text-xs font-medium">All Present</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={markAllAbsent} className="bg-red-500 px-3 py-1.5 rounded">
+          <Text className="text-white text-xs font-medium">All Absent</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setShowHolidayModal(true)} className="bg-purple-500 px-3 py-1.5 rounded">
+          <Text className="text-white text-xs font-medium">Mark Holiday</Text>
+        </TouchableOpacity>
+      </View>
+
+      {isHoliday && (
+        <View className="bg-purple-100 px-4 py-2">
+          <Text className="text-purple-700 text-center font-medium">🎉 {holidayName || 'Holiday'}</Text>
+        </View>
+      )}
+
+      {/* Worker List */}
+      <ScrollView
+        className="flex-1"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchDailyData(); }} />}
+      >
+        {loading ? (
+          <View className="p-8 items-center">
+            <Text className="text-gray-500">Loading...</Text>
+          </View>
+        ) : (
+          entries.map((entry, index) => (
+            <View
+              key={entry.workerId}
+              className={`mx-3 my-1 p-3 rounded-lg border ${
+                entry.hasEntry ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'
+              }`}
+            >
+              <View className="flex-row items-center justify-between">
+                <View className="flex-1">
+                  <Text className="font-semibold text-gray-800" numberOfLines={1}>
+                    {entry.name}
+                  </Text>
+                  <Text className="text-xs text-gray-500">₹{entry.hourlyRate}/hr · ₹{(entry.hourlyRate * entry.dailyWorkingHours).toFixed(0)}/day</Text>
+                </View>
+
+                {/* Status Buttons */}
+                <View className="flex-row items-center space-x-1">
+                  <TouchableOpacity
+                    onPress={() => updateEntry(index, 'status', 'present')}
+                    className={`px-2 py-1 rounded ${
+                      entry.status === 'present' ? 'bg-green-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <Text className={`text-xs ${entry.status === 'present' ? 'text-white' : 'text-gray-600'}`}>P</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => updateEntry(index, 'status', 'absent')}
+                    className={`px-2 py-1 rounded ${
+                      entry.status === 'absent' ? 'bg-red-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <Text className={`text-xs ${entry.status === 'absent' ? 'text-white' : 'text-gray-600'}`}>A</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => updateEntry(index, 'status', 'half-day')}
+                    className={`px-2 py-1 rounded ${
+                      entry.status === 'half-day' ? 'bg-yellow-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <Text className={`text-xs ${entry.status === 'half-day' ? 'text-white' : 'text-gray-600'}`}>½</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Hours Input */}
+                <TextInput
+                  value={entry.hoursWorked}
+                  onChangeText={(val) => updateEntry(index, 'hoursWorked', val)}
+                  keyboardType="decimal-pad"
+                  className="w-12 border border-gray-300 rounded px-2 py-1 text-center mx-2"
+                  editable={entry.status === 'present'}
+                />
+
+                {/* Pay Display */}
+                <Text className="w-16 text-right font-semibold text-gray-700">
+                  ₹{entry.totalPay.toLocaleString()}
+                </Text>
+              </View>
+            </View>
+          ))
+        )}
+        <View className="h-20" />
       </ScrollView>
 
-      {/* Worker Selection Modal */}
-      <Modal
-        visible={showWorkerModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowWorkerModal(false)}
-      >
-        <View className="flex-1 bg-white">
-          {/* Modal Header */}
-          <View className="bg-blue-500 px-4 pt-12 pb-4">
+      {/* Save Button */}
+      <View className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4">
+        <TouchableOpacity
+          onPress={handleSave}
+          disabled={saving}
+          className={`py-3 rounded-lg ${saving ? 'bg-gray-400' : 'bg-blue-500'}`}
+        >
+          <Text className="text-white text-center font-semibold">
+            {saving ? 'Saving...' : 'Save All Entries'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Web Date Modal */}
+      <Modal visible={showDateModal} transparent animationType="fade">
+        <View className="flex-1 bg-black/50 justify-center items-center px-4">
+          <View className="bg-white rounded-xl p-5 w-full max-w-sm">
             <View className="flex-row justify-between items-center mb-4">
-              <Text className="text-xl font-bold text-white">Select Worker</Text>
-              <TouchableOpacity onPress={() => {
-                setShowWorkerModal(false);
-                setSearchQuery('');
-              }}>
-                <Ionicons name="close" size={28} color="#fff" />
+              <Text className="text-lg font-bold text-blue-600">Select Date</Text>
+              <TouchableOpacity onPress={() => setShowDateModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
-            {/* Search Bar */}
-            <View className="bg-white rounded-lg flex-row items-center px-3">
-              <Ionicons name="search" size={20} color="#6B7280" />
-              <TextInput
-                className="flex-1 px-3 py-3 text-gray-800"
-                placeholder="Search by name or ID..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholderTextColor="#9CA3AF"
-                autoCapitalize="none"
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <Ionicons name="close-circle" size={20} color="#9CA3AF" />
+            <Text className="text-gray-600 text-sm mb-2">Day (1-31)</Text>
+            <TextInput
+              value={webDay}
+              onChangeText={setWebDay}
+              keyboardType="number-pad"
+              placeholder="Day"
+              maxLength={2}
+              className="border border-gray-300 rounded-lg px-4 py-3 mb-3 text-center text-lg"
+            />
+
+            <Text className="text-gray-600 text-sm mb-2">Month</Text>
+            <View className="flex-row flex-wrap mb-3">
+              {months.map((m, i) => (
+                <TouchableOpacity
+                  key={m}
+                  onPress={() => setWebMonth((i + 1).toString())}
+                  className={`px-3 py-2 m-1 rounded-lg ${parseInt(webMonth) === i + 1 ? 'bg-blue-500' : 'bg-gray-100'}`}
+                >
+                  <Text className={`text-sm ${parseInt(webMonth) === i + 1 ? 'text-white font-bold' : 'text-gray-700'}`}>{m}</Text>
                 </TouchableOpacity>
-              )}
+              ))}
+            </View>
+
+            <Text className="text-gray-600 text-sm mb-2">Year</Text>
+            <TextInput
+              value={webYear}
+              onChangeText={setWebYear}
+              keyboardType="number-pad"
+              placeholder="Year"
+              maxLength={4}
+              className="border border-gray-300 rounded-lg px-4 py-3 mb-4 text-center text-lg"
+            />
+
+            <View className="flex-row justify-center mb-4 space-x-2">
+              <TouchableOpacity
+                onPress={() => {
+                  const today = new Date();
+                  setWebDay(today.getDate().toString());
+                  setWebMonth((today.getMonth() + 1).toString());
+                  setWebYear(today.getFullYear().toString());
+                }}
+                className="bg-gray-100 px-4 py-2 rounded-lg"
+              >
+                <Text className="text-gray-700 text-sm">Today</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  const yesterday = new Date();
+                  yesterday.setDate(yesterday.getDate() - 1);
+                  setWebDay(yesterday.getDate().toString());
+                  setWebMonth((yesterday.getMonth() + 1).toString());
+                  setWebYear(yesterday.getFullYear().toString());
+                }}
+                className="bg-gray-100 px-4 py-2 rounded-lg"
+              >
+                <Text className="text-gray-700 text-sm">Yesterday</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={applyWebDate} className="bg-blue-500 py-3 rounded-lg">
+              <Text className="text-white text-center font-semibold">Apply Date</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Holiday Modal */}
+      <Modal visible={showHolidayModal} transparent animationType="fade">
+        <View className="flex-1 bg-black/50 justify-center items-center px-4">
+          <View className="bg-white rounded-lg p-6 w-full max-w-sm">
+            <Text className="text-lg font-bold mb-4">Mark as Holiday</Text>
+            <TextInput
+              value={holidayName}
+              onChangeText={setHolidayName}
+              placeholder="Holiday name (e.g., Diwali)"
+              className="border border-gray-300 rounded-lg px-4 py-3 mb-4"
+            />
+            <Text className="text-xs text-gray-500 mb-4">
+              All workers will get full day pay for 8 hours.
+            </Text>
+            <View className="flex-row justify-end space-x-2">
+              <TouchableOpacity onPress={() => setShowHolidayModal(false)} className="px-4 py-2">
+                <Text className="text-gray-600">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleMarkHoliday}
+                disabled={saving}
+                className="bg-purple-500 px-4 py-2 rounded-lg"
+              >
+                <Text className="text-white font-medium">{saving ? 'Saving...' : 'Mark Holiday'}</Text>
+              </TouchableOpacity>
             </View>
           </View>
-
-          {/* Worker List */}
-          <FlatList
-            data={filteredWorkers}
-            renderItem={renderWorkerItem}
-            keyExtractor={(item: Worker) => item._id}
-            contentContainerStyle={{ paddingBottom: 20 }}
-            ListEmptyComponent={
-              <View className="items-center justify-center py-20">
-                <Ionicons name="people-outline" size={64} color="#D1D5DB" />
-                <Text className="text-gray-400 mt-4 text-center">
-                  {workers.length === 0 ? 'No workers added yet' : 'No workers match your search'}
-                </Text>
-              </View>
-            }
-          />
         </View>
       </Modal>
     </View>
