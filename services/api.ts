@@ -119,6 +119,12 @@ export const advanceApi = {
   
   exportDuesExcel: (startDate?: string, endDate?: string) =>
     api.get('/advances/export/dues', { params: { startDate, endDate } }),
+  
+  exportActiveExcel: (startDate?: string, endDate?: string) =>
+    api.get('/advances/export/active', { params: { startDate, endDate } }),
+  
+  exportOverallExcel: () =>
+    api.get('/advances/export/overall'),
 };
 
 // Vault/Transaction APIs
@@ -160,6 +166,7 @@ export const bonusApi = {
     endMonth: number;
     deductionPerAbsentDay?: number;
     deductAdvance?: boolean;
+    persist?: boolean;
   }) => api.post('/bonus/calculate-date-range', data),
   
   updateBonus: (id: string, data: { finalBonusAmount: number; advanceDeduction: number }) =>
@@ -182,6 +189,41 @@ export const bonusApi = {
   
   exportBonusExcel: (startYear: number, startMonth: number, endYear: number, endMonth: number) =>
     api.get('/bonus/export/excel', { params: { startYear, startMonth, endYear, endMonth } }),
+
+  // Export using current UI records (useful to include unsaved deposits)
+  exportBonusExcelWithRecords: (data: { startYear?: number; startMonth?: number; endYear?: number; endMonth?: number; records?: any[] }) =>
+    api.post('/bonus/export/excel', data),
+  
+  saveBonusHistory: (data: {
+    year: number;
+    periodStart: string;
+    periodEnd: string;
+    records: Array<{
+      workerId: string;
+      baseBonusAmount: number;
+      totalDaysWorked: number;
+      totalDaysAbsent: number;
+      totalPenalty: number;
+      extraBonus: number;
+      deposit: number;
+      finalBonusAmount: number;
+      amountToGiveEmployee: number;
+      advanceBalanceAtSave?: number;
+    }>;
+    notes?: string;
+  }) => api.post('/bonus/save-bonus-history', data),
+  
+  getBonusHistory: (year?: number) =>
+    api.get('/bonus/history/all', { params: year ? { year } : {} }),
+  
+  getBonusHistoryById: (id: string) =>
+    api.get(`/bonus/history/${id}`),
+  
+  exportBonusHistoryExcel: (historyId: string) =>
+    api.get(`/bonus/export/history/${historyId}`),
+
+  deleteBonusHistory: (id: string) =>
+    api.delete(`/bonus/history/${id}`),
 };
 
 // Holiday APIs
@@ -209,6 +251,32 @@ export const reportApi = {
   
   exportWorkSummaryExcel: (params: { startDate: string; endDate: string }) =>
     api.get('/reports/export/work-summary', { params }),
+
+  // Export using provided records (useful for exporting current UI state including unsaved deposits)
+  exportWorkSummaryWithRecords: (data: { startDate?: string; endDate?: string; records?: any[] }) =>
+    api.post('/reports/export/work-summary', data),
+  
+  saveSalaryHistory: (data: {
+    periodStart: string;
+    periodEnd: string;
+    records: Array<{
+      workerId: string;
+      totalHoursWorked: number;
+      totalPay: number;
+      deposit: number;
+      finalAmount: number;
+    }>;
+    notes?: string;
+  }) => api.post('/reports/save-salary-history', data),
+  
+  getSalaryHistory: (params?: { startDate?: string; endDate?: string }) =>
+    api.get('/reports/salary-history', { params }),
+  
+  getSalaryHistoryById: (id: string) =>
+    api.get(`/reports/salary-history/${id}`),
+  
+  exportSalaryHistoryExcel: (historyId: string) =>
+    api.get(`/reports/export/salary-history/${historyId}`),
 };
 
 export default api;

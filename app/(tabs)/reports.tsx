@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { reportApi, advanceApi } from '../../services/api';
+import { reportApi } from '../../services/api';
 import { saveAndShareFile } from '../../utils/fileExport';
 
 type WorkerSummary = {
@@ -16,9 +16,23 @@ type WorkerSummary = {
   };
   totalHoursWorked: number;
   totalPay: number;
-  totalAdvanceTaken: number;
+};
+
+type SalaryHistoryRecord = {
+  _id: string;
+  periodStart: string;
+  periodEnd: string;
+  savedDate: string;
+  records: Array<{
+    workerName: string;
+    workerId: string;
+    totalPay: number;
+    deposit: number;
+    finalAmount: number;
+  }>;
+  totalAmount: number;
   totalDeposit: number;
-  finalAmount: number;
+  totalFinal: number;
 };
 
 export default function ReportsScreen() {
@@ -43,19 +57,19 @@ export default function ReportsScreen() {
   const [endYear, setEndYear] = useState(currentDate.getFullYear().toString());
   
   const [report, setReport] = useState<WorkerSummary[]>([]);
+  const [deposits, setDeposits] = useState<{[workerId: string]: string}>({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
 
-  // Deposit modal
-  const [showDepositModal, setShowDepositModal] = useState(false);
-  const [selectedWorker, setSelectedWorker] = useState<WorkerSummary | null>(null);
-  const [depositAmount, setDepositAmount] = useState('');
-  const [depositNotes, setDepositNotes] = useState('');
-  const [saving, setSaving] = useState(false);
+  // History modal
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [history, setHistory] = useState<SalaryHistoryRecord[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -98,7 +112,14 @@ export default function ReportsScreen() {
         startDate: formatDateForApi(startDate), 
         endDate: formatDateForApi(endDate) 
       });
-      setReport(reportRes.data.report || []);
+      const reportData = reportRes.data.report || [];
+      setReport(reportData);
+      // Initialize deposits as empty - user will add them manually
+      const initialDeposits: {[workerId: string]: string} = {};
+      reportData.forEach((item: WorkerSummary) => {
+        initialDeposits[item.worker._id] = '';
+      });
+      setDeposits(initialDeposits);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to fetch report');
     } finally {
@@ -107,39 +128,80 @@ export default function ReportsScreen() {
     }
   };
 
-  const handleDeposit = async () => {
-    if (!selectedWorker || !depositAmount) {
-      Alert.alert('Error', 'Please enter amount');
-      return;
-    }
+  const handleDepositChange = (workerId: string, value: string) => {
+    setDeposits(prev => ({
+      ...prev,
+      [workerId]: value
+    }));
+  };
 
+  const getDepositAmount = (workerId: string): number => {
+    const val = deposits[workerId];
+    return val ? parseFloat(val) || 0 : 0;
+  };
+
+  const getFinalAmount = (item: WorkerSummary): number => {
+    const deposit = getDepositAmount(item.worker._id);
+    return Math.max(0, item.totalPay - deposit);
+  };
+
+
+
+  const fetchHistory = async () => {
     try {
-      setSaving(true);
-      await advanceApi.recordDeposit({
-        workerId: selectedWorker.worker._id,
-        amount: parseFloat(depositAmount),
-        notes: depositNotes.trim() || 'Deposit from reports',
-      });
-      showToast('Deposit recorded successfully');
-      setShowDepositModal(false);
-      setDepositAmount('');
-      setDepositNotes('');
-      setSelectedWorker(null);
-      fetchReport();
+      setLoadingHistory(true);
+      const res = await reportApi.getSalaryHistory();
+      console.log('fetchHistory response', res.data?.length);
+      setHistory(res.data || []);
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to record deposit');
+      console.error('fetchHistory error', error);
+      showToast('Failed to fetch history', 'error');
     } finally {
-      setSaving(false);
+      setLoadingHistory(false);
     }
   };
 
   const exportToExcel = async () => {
+    // Validate deposits first
+    const invalids = report
+      .map(item => ({ name: item.worker.name, balance: item.worker.advanceBalance || 0, deposit: getDepositAmount(item.worker._id) }))
+      .filter(r => r.deposit > 0 && r.deposit > r.balance);
+
+    if (invalids.length > 0) {
+      const names = invalids.map(i => `${i.name} (deposit: ₹${i.deposit}, balance: ₹${i.balance})`).join('\n');
+      Alert.alert('Invalid deposit', `The following deposit(s) exceed the worker advance balance:\n${names}`);
+      return;
+    }
+
     try {
       setExporting(true);
-      const response = await reportApi.exportWorkSummaryExcel({ 
-        startDate: formatDateForApi(startDate), 
-        endDate: formatDateForApi(endDate) 
-      });
+      const hasDeposits = Object.values(deposits).some(d => d && parseFloat(d) > 0);
+      let response;
+
+      if (hasDeposits) {
+        // Send current UI records including deposits
+        const records = report.map(item => ({
+          workerId: item.worker._id,
+          workerName: item.worker.name,
+          hourlyRate: item.worker.hourlyRate,
+          totalHoursWorked: item.totalHoursWorked,
+          totalPay: item.totalPay,
+          deposit: getDepositAmount(item.worker._id),
+          finalAmount: getFinalAmount(item)
+        }));
+
+        response = await reportApi.exportWorkSummaryWithRecords({
+          startDate: formatDateForApi(startDate),
+          endDate: formatDateForApi(endDate),
+          records
+        });
+      } else {
+        response = await reportApi.exportWorkSummaryExcel({ 
+          startDate: formatDateForApi(startDate), 
+          endDate: formatDateForApi(endDate) 
+        });
+      }
+
       const { base64, filename } = response.data;
 
       await saveAndShareFile(
@@ -150,17 +212,93 @@ export default function ReportsScreen() {
       );
       showToast('Excel file exported!');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to export report');
+      const msg = error?.response?.data?.error || error.message || 'Failed to export report';
+      Alert.alert('Error', msg);
     } finally {
       setExporting(false);
     }
   };
 
+  // Improve save error handling and validate deposits before saving
+  const handleSaveReport = async () => {
+    console.log('handleSaveReport called', { reportLength: report.length, saving });
+
+    const invalids = report
+      .map(item => ({ name: item.worker.name, balance: item.worker.advanceBalance || 0, deposit: getDepositAmount(item.worker._id) }))
+      .filter(r => r.deposit > 0 && r.deposit > r.balance);
+
+    if (invalids.length > 0) {
+      const names = invalids.map(i => `${i.name} (deposit: ₹${i.deposit}, balance: ₹${i.balance})`).join('\n');
+      const msg = `The following deposit(s) exceed the worker advance balance:\n${names}`;
+      if (Platform.OS === 'web') {
+        alert(msg);
+      } else {
+        Alert.alert('Invalid deposit', msg);
+      }
+      return;
+    }
+
+    const hasDeposits = Object.values(deposits).some(d => d && parseFloat(d) > 0);
+    
+    const confirmSave = async () => {
+      console.log('Save Report confirmed');
+      try {
+        setSaving(true);
+              
+              const records = report.map(item => ({
+                workerId: item.worker._id,
+                totalHoursWorked: item.totalHoursWorked,
+                totalPay: item.totalPay,
+                deposit: getDepositAmount(item.worker._id),
+                finalAmount: getFinalAmount(item)
+              }));
+
+              console.log('Saving report records', { recordsCount: records.length });
+
+              await reportApi.saveSalaryHistory({
+                periodStart: formatDateForApi(startDate),
+                periodEnd: formatDateForApi(endDate),
+                records,
+                notes: `Saved on ${new Date().toLocaleDateString('en-IN')}`
+              });
+
+        console.log('saveSalaryHistory API returned');
+        showToast('Report saved successfully! Deposits recorded to advance.');
+        await fetchReport(); // Refresh to clear deposits
+        // Also refresh history so user can view the saved report immediately
+        await fetchHistory();
+        setShowHistoryModal(true);
+      } catch (error: any) {
+        console.error('save report error', error);
+        const msg = error?.response?.data?.error || error.message || 'Failed to save report';
+        showToast(msg, 'error');
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    const confirmMsg = `This will save the current report${hasDeposits ? ' and record all deposits to the advance system' : ''}. After saving, this report will be locked and cannot be edited. Continue?`;
+    
+    if (Platform.OS === 'web') {
+      if (confirm(confirmMsg)) {
+        await confirmSave();
+      }
+    } else {
+      Alert.alert(
+        'Save Report',
+        confirmMsg,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Save', onPress: confirmSave }
+        ]
+      );
+    }
+  };
+
   const getTotalHours = () => report.reduce((sum, item) => sum + item.totalHoursWorked, 0);
   const getTotalAmount = () => report.reduce((sum, item) => sum + item.totalPay, 0);
-  const getTotalAdvance = () => report.reduce((sum, item) => sum + (item.totalAdvanceTaken || 0), 0);
-  const getTotalDeposit = () => report.reduce((sum, item) => sum + item.totalDeposit, 0);
-  const getTotalFinal = () => report.reduce((sum, item) => sum + item.finalAmount, 0);
+  const getTotalDeposit = () => report.reduce((sum, item) => sum + getDepositAmount(item.worker._id), 0);
+  const getTotalFinal = () => report.reduce((sum, item) => sum + getFinalAmount(item), 0);
 
   const getDateRangeLabel = () => `${formatDate(startDate)} - ${formatDate(endDate)}`;
 
@@ -248,8 +386,8 @@ export default function ReportsScreen() {
             <Text className="text-white font-bold">₹{getTotalAmount().toFixed(0)}</Text>
           </View>
           <View>
-            <Text className="text-blue-100 text-xs">Advance</Text>
-            <Text className="text-white font-bold">₹{getTotalAdvance().toFixed(0)}</Text>
+            <Text className="text-blue-100 text-xs">Deposit</Text>
+            <Text className="text-white font-bold">₹{getTotalDeposit().toFixed(0)}</Text>
           </View>
           <View className="items-end">
             <Text className="text-blue-100 text-xs">Final</Text>
@@ -268,16 +406,41 @@ export default function ReportsScreen() {
           <Text className="text-gray-700 text-xs font-medium ml-1" numberOfLines={1}>{getDateRangeLabel()}</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          onPress={() => { fetchHistory(); setShowHistoryModal(true); }}
+          className="bg-purple-500 p-2 rounded-lg flex-row items-center justify-center"
+        >
+          <Ionicons name="time-outline" size={16} color="white" />
+          <Text className="text-white text-xs font-medium ml-1">History</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View className="flex-row mx-3 mt-2 space-x-2">
+        <TouchableOpacity
+          onPress={handleSaveReport}
+          disabled={saving || !report.length}
+          className={`flex-1 p-2 rounded-lg flex-row items-center justify-center ${saving || !report.length ? 'bg-gray-300' : 'bg-green-500'}`}
+        >
+          <Ionicons name="save-outline" size={16} color="white" />
+          <Text className="text-white text-xs font-medium ml-1">{saving ? 'Saving...' : 'Save Report'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           onPress={exportToExcel}
           disabled={exporting || !report.length}
-          className={`flex-1 p-2 rounded-lg flex-row items-center justify-center ${exporting || !report.length ? 'bg-gray-300' : 'bg-green-500'}`}
+          className={`flex-1 p-2 rounded-lg flex-row items-center justify-center ${exporting || !report.length ? 'bg-gray-300' : 'bg-blue-500'}`}
         >
           <Ionicons name="download-outline" size={16} color="white" />
           <Text className="text-white text-xs font-medium ml-1">{exporting ? 'Exporting...' : 'Export Excel'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowZeros(!showZeros)} className={`ml-2 px-3 py-2 rounded-lg ${showZeros ? 'bg-gray-800' : 'bg-gray-200'}`}>
-          <Text className={`${showZeros ? 'text-white' : 'text-gray-700'} text-xs`}>{showZeros ? 'Showing zeros' : 'Hide zeros'}</Text>
+        <TouchableOpacity onPress={() => setShowZeros(!showZeros)} className={`px-3 py-2 rounded-lg ${showZeros ? 'bg-gray-800' : 'bg-gray-200'}`}>
+          <Text className={`${showZeros ? 'text-white' : 'text-gray-700'} text-xs`}>{showZeros ? '0s' : 'Hide 0s'}</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Info Text */}
+      <View className="mx-3 mt-2 bg-yellow-50 p-2 rounded-lg">
+        <Text className="text-yellow-700 text-xs">
+          💡 Add deposit amounts for workers who want to repay advance from salary. Click "Save Report" to record deposits and lock this report.
+        </Text>
       </View> 
 
       {/* Excel-like Table - Full Screen */}
@@ -288,23 +451,22 @@ export default function ReportsScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={true}>
             <View>
             {/* Table Header */}
-            <View className="bg-gray-200 px-2 py-2 flex-row border-b border-gray-300" style={{ minWidth: 900 }}>
+            <View className="bg-gray-200 px-2 py-2 flex-row border-b border-gray-300" style={{ minWidth: 750 }}>
               <Text className="w-36 text-xs font-bold text-gray-700 border-r border-gray-300">Name</Text>
               <Text className="w-16 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Rate</Text>
               <Text className="w-16 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Hours</Text>
               <Text className="w-24 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Amount</Text>
-              <Text className="w-24 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Advance</Text>
-              <Text className="w-24 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Deposit</Text>
-              <Text className="w-24 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Final</Text>
-              <Text className="w-28 text-xs font-bold text-gray-700 text-center">Action</Text>
+              <Text className="w-20 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Adv. Bal</Text>
+              <Text className="w-24 text-xs font-bold text-green-700 text-center border-r border-gray-300">Deposit</Text>
+              <Text className="w-24 text-xs font-bold text-gray-700 text-right">Final</Text>
             </View>
 
             {/* Table Rows */}
             {(() => {
-              const visibleReport = report.filter(item => showZeros || item.finalAmount !== 0 || item.totalAdvanceTaken !== 0 || item.totalDeposit !== 0);
+              const visibleReport = report.filter(item => showZeros || getFinalAmount(item) !== 0 || getDepositAmount(item.worker._id) !== 0);
               if (visibleReport.length === 0) {
                 return (
-                  <View className="bg-white p-8 items-center" style={{ minWidth: 900 }}>
+                  <View className="bg-white p-8 items-center" style={{ minWidth: 750 }}>
                     <Ionicons name="document-text-outline" size={40} color="#9CA3AF" />
                     <Text className="text-gray-500 mt-2 text-sm">{loading ? 'Loading...' : 'No data for this period'}</Text>
                   </View>
@@ -314,7 +476,7 @@ export default function ReportsScreen() {
                 <View
                   key={item.worker._id}
                   className={`px-2 py-2 flex-row items-center border-b border-gray-200 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}
-                  style={{ minWidth: 900 }}
+                  style={{ minWidth: 750 }}
                 >
                   <View className="w-36 border-r border-gray-100">
                     <Text className="text-xs font-medium text-gray-800" numberOfLines={1}>{item.worker.name}</Text>
@@ -323,32 +485,31 @@ export default function ReportsScreen() {
                   <Text className="w-16 text-xs text-gray-600 text-right border-r border-gray-100">₹{item.worker.hourlyRate}</Text>
                   <Text className="w-16 text-xs text-gray-600 text-right border-r border-gray-100">{item.totalHoursWorked.toFixed(1)}</Text>
                   <Text className="w-24 text-xs text-gray-700 text-right font-medium border-r border-gray-100">₹{item.totalPay.toFixed(0)}</Text>
-                  <Text className="w-24 text-xs text-orange-600 text-right border-r border-gray-100">{item.totalAdvanceTaken > 0 ? `₹${item.totalAdvanceTaken}` : '0'}</Text>
-                  <Text className="w-24 text-xs text-green-600 text-right border-r border-gray-100">{item.totalDeposit > 0 ? `₹${item.totalDeposit}` : '0'}</Text>
-                  <Text className="w-24 text-xs text-blue-600 text-right font-bold border-r border-gray-100">₹{item.finalAmount.toFixed(0)}</Text>
-                  <View className="w-28 items-center ml-2">
-                    <TouchableOpacity
-                      onPress={() => { setSelectedWorker(item); setShowDepositModal(true); }}
-                      className="bg-blue-100 px-3 py-1 rounded"
-                    >
-                      <Text className="text-blue-600 text-xs">Deposit</Text>
-                    </TouchableOpacity>
+                  <Text className="w-20 text-xs text-orange-600 text-right border-r border-gray-100">₹{item.worker.advanceBalance || 0}</Text>
+                  <View className="w-24 px-1 border-r border-gray-100">
+                    <TextInput
+                      value={deposits[item.worker._id] || ''}
+                      onChangeText={(val) => handleDepositChange(item.worker._id, val)}
+                      placeholder="0"
+                      keyboardType="numeric"
+                      className="bg-green-50 border border-green-200 rounded px-2 py-1 text-center text-xs"
+                    />
                   </View>
+                  <Text className="w-24 text-xs text-blue-600 text-right font-bold">₹{getFinalAmount(item).toFixed(0)}</Text>
                 </View>
               ))
             })() }
 
             {/* Table Footer */}
             {report.length > 0 && (
-              <View className="bg-gray-200 px-2 py-2 flex-row border-t border-gray-400" style={{ width: '100%' }}>
-                <Text className="w-28 text-xs font-bold text-gray-700">TOTAL</Text>
-                <Text className="w-14 text-xs text-gray-400 text-right">-</Text>
-                <Text className="w-14 text-xs font-bold text-gray-700 text-right">{getTotalHours().toFixed(0)}</Text>
-                <Text className="w-20 text-xs font-bold text-gray-700 text-right">₹{getTotalAmount().toFixed(0)}</Text>
-                <Text className="w-20 text-xs font-bold text-orange-600 text-right">₹{getTotalAdvance().toFixed(0)}</Text>
-                <Text className="w-20 text-xs font-bold text-green-600 text-right">₹{getTotalDeposit().toFixed(0)}</Text>
-                <Text className="w-20 text-xs font-bold text-blue-600 text-right">₹{getTotalFinal().toFixed(0)}</Text>
-                <View className="w-16" />
+              <View className="bg-gray-200 px-2 py-2 flex-row border-t border-gray-400" style={{ minWidth: 750 }}>
+                <Text className="w-36 text-xs font-bold text-gray-700">TOTAL</Text>
+                <Text className="w-16 text-xs text-gray-400 text-right">-</Text>
+                <Text className="w-16 text-xs font-bold text-gray-700 text-right">{getTotalHours().toFixed(0)}</Text>
+                <Text className="w-24 text-xs font-bold text-gray-700 text-right">₹{getTotalAmount().toFixed(0)}</Text>
+                <Text className="w-20 text-xs text-gray-400 text-right">-</Text>
+                <Text className="w-24 text-xs font-bold text-green-600 text-center">₹{getTotalDeposit().toFixed(0)}</Text>
+                <Text className="w-24 text-xs font-bold text-blue-600 text-right">₹{getTotalFinal().toFixed(0)}</Text>
               </View>
             )}
           </View>
@@ -565,41 +726,72 @@ export default function ReportsScreen() {
         </View>
       </Modal>
 
-      {/* Deposit Modal */}
-      <Modal visible={showDepositModal} transparent animationType="fade">
-        <View className="flex-1 bg-black/50 justify-center items-center px-4">
-          <View className="bg-white rounded-lg p-5 w-full max-w-sm">
-            <Text className="text-lg font-bold mb-4">Record Deposit</Text>
-            <Text className="text-gray-600 mb-1 text-sm">Worker: {selectedWorker?.worker.name}</Text>
-            <Text className="text-xs text-gray-500 mb-3">Due Amount: ₹{selectedWorker?.finalAmount.toFixed(0)}</Text>
-            <TextInput
-              value={depositAmount}
-              onChangeText={setDepositAmount}
-              placeholder="Deposit Amount"
-              keyboardType="numeric"
-              className="border border-gray-300 rounded-lg px-4 py-3 mb-3"
-            />
-            <TextInput
-              value={depositNotes}
-              onChangeText={setDepositNotes}
-              placeholder="Notes (optional)"
-              className="border border-gray-300 rounded-lg px-4 py-3 mb-4"
-            />
-            <View className="flex-row justify-end space-x-2">
-              <TouchableOpacity 
-                onPress={() => { setShowDepositModal(false); setDepositAmount(''); setDepositNotes(''); setSelectedWorker(null); }} 
-                className="px-4 py-2"
-              >
-                <Text className="text-gray-600">Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleDeposit}
-                disabled={saving}
-                className="bg-blue-500 px-4 py-2 rounded-lg"
-              >
-                <Text className="text-white font-medium">{saving ? 'Saving...' : 'Record Deposit'}</Text>
+      {/* History Modal */}
+      <Modal visible={showHistoryModal} transparent animationType="slide">
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white rounded-t-2xl p-5" style={{ maxHeight: '80%' }}>
+            <View className="flex-row justify-between items-center mb-4">
+              <Text className="text-lg font-bold">Saved Reports</Text>
+              <TouchableOpacity onPress={() => setShowHistoryModal(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
+
+            <ScrollView>
+              {loadingHistory ? (
+                <View className="py-8 items-center">
+                  <Text className="text-gray-500">Loading...</Text>
+                </View>
+              ) : history.length === 0 ? (
+                <View className="py-8 items-center">
+                  <Ionicons name="document-text-outline" size={40} color="#9CA3AF" />
+                  <Text className="text-gray-500 mt-2">No saved reports</Text>
+                </View>
+              ) : (
+                history.map((h, idx) => (
+                  <View key={h._id} className={`p-3 rounded-lg mb-2 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'} border border-gray-200`}>
+                    <View className="flex-row justify-between items-center">
+                      <View>
+                        <Text className="text-sm font-bold text-gray-800">
+                          {new Date(h.periodStart).toLocaleDateString('en-IN')} - {new Date(h.periodEnd).toLocaleDateString('en-IN')}
+                        </Text>
+                        <Text className="text-xs text-gray-500">
+                          Saved: {new Date(h.savedDate).toLocaleDateString('en-IN')}
+                        </Text>
+                      </View>
+                      <View className="items-end">
+                        <Text className="text-sm font-bold text-blue-600">₹{h.totalFinal?.toLocaleString()}</Text>
+                        <Text className="text-xs text-green-600">Deposit: ₹{h.totalDeposit?.toLocaleString()}</Text>
+                      </View>
+                    </View>
+                    <View className="flex-row mt-2 justify-between">
+                      <Text className="text-xs text-gray-500">{h.records?.length || 0} workers</Text>
+                      <View className="flex-row space-x-2">
+                        <TouchableOpacity
+                          onPress={async () => {
+                            try {
+                              const res = await reportApi.exportSalaryHistoryExcel(h._id);
+                              await saveAndShareFile(
+                                res.data.base64,
+                                res.data.filename,
+                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                'Export Saved Report'
+                              );
+                              showToast('Exported!');
+                            } catch (err) {
+                              showToast('Export failed', 'error');
+                            }
+                          }}
+                          className="bg-blue-100 px-3 py-1 rounded"
+                        >
+                          <Text className="text-blue-600 text-xs">Export</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>

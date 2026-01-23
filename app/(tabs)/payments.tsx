@@ -59,6 +59,11 @@ export default function PaymentsScreen() {
   const [depositAmount, setDepositAmount] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Computed values for deposit validation
+  const selectedWorkerBalance = selectedWorker?.advanceBalance || 0;
+  const parsedDeposit = parseFloat(depositAmount || '0') || 0;
+  const canDeposit = !!selectedWorker && parsedDeposit > 0 && parsedDeposit <= selectedWorkerBalance;
   
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -213,6 +218,12 @@ export default function PaymentsScreen() {
     }
 
     const amount = parseFloat(depositAmount);
+
+    if ((selectedWorker.advanceBalance || 0) <= 0) {
+      Alert.alert('Error', 'This worker has no outstanding advance');
+      return;
+    }
+
     if (amount > selectedWorker.advanceBalance) {
       Alert.alert('Error', 'Amount exceeds advance balance');
       return;
@@ -232,11 +243,12 @@ export default function PaymentsScreen() {
       fetchWorkers();
       fetchWorkerAdvances(selectedWorker._id);
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to record deposit');
+      const msg = error?.response?.data?.error || error.message || 'Failed to record deposit';
+      Alert.alert('Error', msg);
     } finally {
       setSaving(false);
     }
-  };
+  }; 
 
   const formatDateForApi = (date: Date) => date.toISOString().split('T')[0];
   const formatDate = (date: Date | null) => date ? date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
@@ -258,6 +270,50 @@ export default function PaymentsScreen() {
       setShowDateModal(false);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to export report');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportActiveToExcel = async () => {
+    try {
+      setExporting(true);
+      const response = await advanceApi.exportActiveExcel(
+        formatDateForApi(startDate),
+        formatDateForApi(endDate)
+      );
+      const { base64, filename } = response.data;
+
+      await saveAndShareFile(
+        base64,
+        filename,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Export Active Labour Dues'
+      );
+      showToast('Active export saved!');
+      setShowDateModal(false);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to export active report');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportOverallToExcel = async () => {
+    try {
+      setExporting(true);
+      const response = await advanceApi.exportOverallExcel();
+      const { base64, filename } = response.data;
+
+      await saveAndShareFile(
+        base64,
+        filename,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Export Overall Advance Summary'
+      );
+      showToast('Overall export saved!');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to export overall report');
     } finally {
       setExporting(false);
     }
@@ -360,19 +416,27 @@ export default function PaymentsScreen() {
 
       {/* Action Row */}
       <View className="flex-row mx-3 mt-2 space-x-2">
-        <TouchableOpacity onPress={exportDuesToExcel} className="flex-1 bg-white p-2 rounded-lg border border-gray-200 flex-row items-center justify-center">
-          <Ionicons name="download-outline" size={14} color="#3B82F6" />
-          <Text className="text-gray-700 text-xs font-medium ml-1">Export Total</Text>
+        <TouchableOpacity onPress={() => setShowDateModal(true)} className="flex-1 bg-white p-2 rounded-lg border border-gray-200 flex-row items-center justify-center">
+          <Ionicons name="download-outline" size={14} color="#22C55E" />
+          <Text className="text-green-700 text-xs font-medium ml-1">Export Active</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={exportOverallToExcel} disabled={exporting} className={`flex-1 p-2 rounded-lg flex-row items-center justify-center ${exporting ? 'bg-gray-300' : 'bg-blue-100'}`}>
+          <Ionicons name="cloud-download-outline" size={14} color="#3B82F6" />
+          <Text className="text-blue-700 text-xs font-medium ml-1">Export Overall</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowHelpModal(true)} className="bg-yellow-500 p-2 rounded-lg flex-row items-center justify-center">
           <Ionicons name="help-circle-outline" size={14} color="white" />
-          <Text className="text-white text-xs font-medium ml-1">How Calc</Text>
+          <Text className="text-white text-xs font-medium ml-1">?</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowZeros(!showZeros)} className={`ml-2 px-3 py-2 rounded-lg ${showZeros ? 'bg-gray-800' : 'bg-gray-200'}`}>
-          <Text className={`${showZeros ? 'text-white' : 'text-gray-700'} text-xs`}>{showZeros ? 'Showing zeros' : 'Hide zeros'}</Text>
+      </View>
+
+      <View className="flex-row mx-3 mt-2 space-x-2">
+        <TouchableOpacity onPress={() => setShowZeros(!showZeros)} className={`px-3 py-2 rounded-lg ${showZeros ? 'bg-gray-800' : 'bg-gray-200'}`}>
+          <Text className={`${showZeros ? 'text-white' : 'text-gray-700'} text-xs`}>{showZeros ? '0s' : 'Hide 0s'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={openFindWorkerModal} className="ml-2 px-3 py-2 rounded-lg bg-blue-100">
-          <Text className="text-blue-700 text-xs">Find Worker</Text>
+        <TouchableOpacity onPress={openFindWorkerModal} className="flex-1 px-3 py-2 rounded-lg bg-blue-100 flex-row items-center justify-center">
+          <Ionicons name="search-outline" size={14} color="#3B82F6" />
+          <Text className="text-blue-700 text-xs ml-1">Find Worker</Text>
         </TouchableOpacity>
       </View> 
 
@@ -643,7 +707,7 @@ export default function PaymentsScreen() {
           <View className="bg-white rounded-lg p-5 w-full max-w-sm">
             <Text className="text-lg font-bold mb-4">Record Deposit</Text>
             <Text className="text-gray-600 mb-1 text-sm">From: {selectedWorker?.name}</Text>
-            <Text className="text-red-500 text-xs mb-3">Balance: ₹{selectedWorker?.advanceBalance}</Text>
+            <Text className="text-red-500 text-xs mb-2">Balance: ₹{selectedWorker?.advanceBalance}</Text>
             <TextInput
               value={depositAmount}
               onChangeText={setDepositAmount}
@@ -655,16 +719,23 @@ export default function PaymentsScreen() {
               value={notes}
               onChangeText={setNotes}
               placeholder="Notes (optional)"
-              className="border border-gray-300 rounded-lg px-4 py-3 mb-4"
+              className="border border-gray-300 rounded-lg px-4 py-3 mb-3"
             />
+
+            {selectedWorkerBalance <= 0 ? (
+              <Text className="text-red-600 text-sm mb-3">This worker has no outstanding advance — deposit not allowed.</Text>
+            ) : (
+              <Text className="text-gray-500 text-xs mb-3">Max deposit allowed: ₹{selectedWorkerBalance}</Text>
+            )}
+
             <View className="flex-row justify-end space-x-2">
               <TouchableOpacity onPress={() => { setShowDepositModal(false); setDepositAmount(''); setNotes(''); }} className="px-4 py-2">
                 <Text className="text-gray-600">Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleDeposit}
-                disabled={saving}
-                className="bg-blue-500 px-4 py-2 rounded-lg"
+                disabled={saving || !canDeposit}
+                className={`px-4 py-2 rounded-lg ${saving || !canDeposit ? 'bg-gray-400' : 'bg-blue-500'}`}
               >
                 <Text className="text-white font-medium">{saving ? 'Saving...' : 'Record Deposit'}</Text>
               </TouchableOpacity>
@@ -914,14 +985,29 @@ export default function PaymentsScreen() {
 
             <TouchableOpacity
               onPress={() => { 
-                // Export total summary regardless of date inputs
-                exportDuesToExcel();
+                // Apply date range first then export active
+                if (Platform.OS === 'web') {
+                  const newStart = validateDate(startDay, startMonth, startYear);
+                  const newEnd = validateDate(endDay, endMonth, endYear);
+                  if (newStart) setStartDate(newStart);
+                  if (newEnd) setEndDate(newEnd);
+                } else {
+                  if (tempStartDate) setStartDate(tempStartDate);
+                  if (tempEndDate) setEndDate(tempEndDate);
+                }
+                exportActiveToExcel();
               }}
               disabled={exporting}
               className={`py-3 rounded-lg mt-2 ${exporting ? 'bg-gray-400' : 'bg-green-500'}`}
             >
-              <Text className="text-white text-center font-semibold">{exporting ? 'Exporting...' : 'Export Total'}</Text>
+              <Text className="text-white text-center font-semibold">{exporting ? 'Exporting...' : 'Export Active Labour Dues'}</Text>
             </TouchableOpacity>
+
+            <View className="bg-yellow-50 p-2 rounded-lg mt-2">
+              <Text className="text-yellow-700 text-xs text-center">
+                💡 This export shows each worker's advance (AD) and deposit (DP) transactions in ledger format
+              </Text>
+            </View>
           </View>
         </View>
       </Modal>
