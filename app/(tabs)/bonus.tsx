@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, RefreshControl, Platform } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, RefreshControl, Platform, GestureResponderEvent } from 'react-native';
 import { useState, useCallback } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,6 +37,13 @@ interface BonusRecord {
 
 export default function BonusScreen() {
   const currentDate = new Date();
+  
+  // Month names for quick select
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
   // Use actual Date objects for start and end
   const [startDate, setStartDate] = useState(new Date(currentDate.getFullYear() - 1, 3, 1)); // April 1 last year
   const [endDate, setEndDate] = useState(new Date(currentDate.getFullYear(), 2, 31)); // March 31 this year
@@ -75,7 +82,6 @@ export default function BonusScreen() {
   const [selectedBonus, setSelectedBonus] = useState<BonusRecord | null>(null);
   
   // Quick action modals
-  const [showExtraBonusModal, setShowExtraBonusModal] = useState(false);
   const [showDepositModal, setShowDepositModal] = useState(false);
   
   const [extraBonusAmount, setExtraBonusAmount] = useState('');
@@ -95,13 +101,24 @@ export default function BonusScreen() {
 
   // Deposits entered in UI per worker (like Reports)
   const [deposits, setDeposits] = useState<Record<string, string>>({});
+  // Extra bonuses entered in UI per worker
+  const [extraBonuses, setExtraBonuses] = useState<Record<string, string>>({});
 
   const handleDepositChange = (workerId: string, value: string) => {
     setDeposits(prev => ({ ...prev, [workerId]: value }));
   };
 
+  const handleExtraBonusChange = (workerId: string, value: string) => {
+    setExtraBonuses(prev => ({ ...prev, [workerId]: value }));
+  };
+
   const getDepositAmount = (workerId: string): number => {
     const val = deposits[workerId];
+    return val ? parseFloat(val) || 0 : 0;
+  };
+
+  const getExtraBonusAmount = (workerId: string): number => {
+    const val = extraBonuses[workerId];
     return val ? parseFloat(val) || 0 : 0;
   };
 
@@ -110,7 +127,10 @@ export default function BonusScreen() {
     return sum + (getDepositAmount(workerId) || b.employeeDeposit || 0);
   }, 0);
 
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const getTotalExtraBonus = () => bonuses.reduce((sum, b) => {
+    const workerId = typeof (b as any).worker === 'object' ? (b as any).worker._id : b.worker;
+    return sum + (getExtraBonusAmount(workerId) || b.extraBonus || 0);
+  }, 0);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToastMessage(message);
@@ -158,13 +178,16 @@ export default function BonusScreen() {
       setSummary(summaryRes.data);
       setWorkers(workersRes.data);
 
-      // initialize deposits to empty strings (user can enter per-worker deposit similar to Reports)
+      // initialize deposits and extra bonuses to empty strings
       const initialDeposits: Record<string,string> = {};
+      const initialExtraBonuses: Record<string,string> = {};
       (bonusRes.data || []).forEach((b: any) => {
         const workerId = typeof b.worker === 'object' ? b.worker._id : b.worker;
         initialDeposits[workerId] = '';
+        initialExtraBonuses[workerId] = '';
       });
       setDeposits(initialDeposits);
+      setExtraBonuses(initialExtraBonuses);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to fetch data');
     } finally {
@@ -228,27 +251,6 @@ export default function BonusScreen() {
     );
   };
 
-  const handleAddExtraBonus = async () => {
-    if (!extraBonusAmount || parseFloat(extraBonusAmount) <= 0 || !selectedBonus) {
-      Alert.alert('Error', 'Please enter a valid amount');
-      return;
-    }
-    const selectedId = selectedBonus._id;
-    try {
-      setProcessingAction(true);
-      await bonusApi.addExtraBonus(selectedId, parseFloat(extraBonusAmount));
-      showToast('Extra bonus added');
-      setExtraBonusAmount('');
-      fetchData();
-      const updated = await bonusApi.getByDateRange(startDate.getFullYear(), startDate.getMonth() + 1, endDate.getFullYear(), endDate.getMonth() + 1);
-      setSelectedBonus(updated.data.find((b: BonusRecord) => b._id === selectedId) || null);
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to add extra bonus');
-    } finally {
-      setProcessingAction(false);
-    }
-  };
-
   const handleAddDeposit = async () => {
     if (!depositAmount || parseFloat(depositAmount) <= 0 || !selectedBonus) {
       Alert.alert('Error', 'Please enter a valid amount');
@@ -262,15 +264,28 @@ export default function BonusScreen() {
       setProcessingAction(true);
       const note = depositNote || 'Deposit recorded in bonus (no advance entry)';
 
-      // Record deposit only on the bonus record (do NOT record to advances here)
-      await bonusApi.addEmployeeDeposit(bonus._id, amount, note);
+      // Get worker information for context
+      const workerId = typeof (bonus as any).worker === 'object' 
+        ? (bonus as any).worker._id 
+        : bonus.worker;
+      
+      const workerInfo = typeof (bonus as any).worker === 'object' 
+        ? (bonus as any).worker 
+        : workers.find(w => w._id === workerId);
+
+      // Record deposit only on the bonus record with worker context
+      await bonusApi.addEmployeeDeposit(bonus._id, amount, note, {
+        workerId: workerId,
+        workerName: workerInfo?.name,
+        year: startDate.getFullYear(),
+        periodStart: startDate.toISOString(),
+        periodEnd: endDate.toISOString()
+      });
 
       showToast('Deposit recorded on bonus');
       setDepositAmount('');
       setDepositNote('');
       fetchData();
-      const updated = await bonusApi.getByDateRange(startDate.getFullYear(), startDate.getMonth() + 1, endDate.getFullYear(), endDate.getMonth() + 1);
-      setSelectedBonus(updated.data.find((b: BonusRecord) => b._id === bonus._id) || null);
     } catch (error: any) {
       const msg = error?.response?.data?.error || error.message || 'Failed to record deposit';
       Alert.alert('Error', msg);
@@ -283,35 +298,40 @@ export default function BonusScreen() {
     try {
       setExporting(true);
 
-      // If there are UI deposits or unsaved changes, prefer POST export with current records
-      const hasUiDeposits = Object.values(deposits).some(v => parseFloat(v) > 0);
+      // Always export current UI records, regardless of whether inputs are empty or not
+      // This ensures we export calculated (unsaved) data correctly
+      const records = bonuses.map(b => {
+        const workerId = typeof (b as any).worker === 'object' ? (b as any).worker._id : b.worker;
+        const extraBonusUI = getExtraBonusAmount(workerId) || 0;
+        const depositUI = getDepositAmount(workerId) || 0;
+        const totalExtraBonus = (b.extraBonus || 0) + extraBonusUI;
+        const totalDeposit = (b.employeeDeposit || 0) + depositUI;
+        
+        return {
+          workerId,
+          workerName: getWorkerName(b.worker),
+          hourlyRate: b.hourlyRate || (b as any).worker?.hourlyRate || 0,
+          baseBonusAmount: b.baseBonusAmount,
+          totalDaysAbsent: b.totalDaysAbsent,
+          totalPenalty: b.totalPenalty,
+          currentAdvanceBalance: (b.currentAdvanceBalance || (b as any).worker?.advanceBalance) || 0,
+          extraBonus: totalExtraBonus,
+          deposit: totalDeposit,
+          finalBonusAmount: Math.max(0, (b.baseBonusAmount || 0) - (b.totalPenalty || 0) + totalExtraBonus),
+          amountToGiveEmployee: Math.max(0, (b.baseBonusAmount || 0) - (b.totalPenalty || 0) + totalExtraBonus - totalDeposit)
+        };
+      });
 
-      if (hasUiDeposits) {
-        const records = bonuses.map(b => {
-          const workerId = typeof (b as any).worker === 'object' ? (b as any).worker._id : b.worker;
-          return {
-            workerId,
-            workerName: getWorkerName(b.worker),
-            hourlyRate: b.hourlyRate || (b as any).worker?.hourlyRate || 0,
-            baseBonusAmount: b.baseBonusAmount,
-            totalDaysAbsent: b.totalDaysAbsent,
-            totalPenalty: b.totalPenalty,
-            currentAdvanceBalance: (b.currentAdvanceBalance || (b as any).worker?.advanceBalance) || 0,
-            extraBonus: b.extraBonus || 0,
-            deposit: getDepositAmount(workerId) || b.employeeDeposit || 0,
-            finalBonusAmount: b.finalBonusAmount,
-            amountToGiveEmployee: Math.max(0, (b.amountToGiveEmployee || b.finalBonusAmount) - (getDepositAmount(workerId) || 0))
-          };
-        });
-
-        const response = await bonusApi.exportBonusExcelWithRecords({ startYear: startDate.getFullYear(), startMonth: startDate.getMonth() + 1, endYear: endDate.getFullYear(), endMonth: endDate.getMonth() + 1, records });
-        const { base64, filename } = response.data;
-        await saveAndShareFile(base64, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Export Bonus (with UI deposits)');
-      } else {
-        const response = await bonusApi.exportBonusExcel(startDate.getFullYear(), startDate.getMonth() + 1, endDate.getFullYear(), endDate.getMonth() + 1);
-        const { base64, filename } = response.data;
-        await saveAndShareFile(base64, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Export Bonus');
-      }
+      const response = await bonusApi.exportBonusExcelWithRecords({ 
+        startYear: startDate.getFullYear(), 
+        startMonth: startDate.getMonth() + 1, 
+        endYear: endDate.getFullYear(), 
+        endMonth: endDate.getMonth() + 1, 
+        records 
+      });
+      
+      const { base64, filename } = response.data;
+      await saveAndShareFile(base64, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Export Bonus');
 
       showToast('Excel exported!');
     } catch (error: any) {
@@ -329,32 +349,36 @@ export default function BonusScreen() {
       try {
         setSavingReport(true);
               
-              const records = bonuses.map(bonus => {
-                const workerId = typeof (bonus as any).worker === 'object' ? (bonus as any).worker._id : bonus.worker;
-                const deposit = getDepositAmount(workerId) || bonus.employeeDeposit || 0;
-                return {
-                  workerId,
-                  baseBonusAmount: bonus.baseBonusAmount,
-                  totalDaysWorked: bonus.totalDaysWorked || 0,
-                  totalDaysAbsent: bonus.totalDaysAbsent,
-                  totalPenalty: bonus.totalPenalty,
-                  extraBonus: bonus.extraBonus,
-                  deposit,
-                  finalBonusAmount: bonus.finalBonusAmount,
-                  amountToGiveEmployee: bonus.amountToGiveEmployee,
-                  advanceBalanceAtSave: getWorkerAdvance(bonus.worker)
-                };
-              });
+        const records = bonuses.map(bonus => {
+          const workerId = typeof (bonus as any).worker === 'object' ? (bonus as any).worker._id : bonus.worker;
+          const extraBonusUI = getExtraBonusAmount(workerId) || 0;
+          const depositUI = getDepositAmount(workerId) || 0;
+          const totalExtraBonus = (bonus.extraBonus || 0) + extraBonusUI;
+          const totalDeposit = (bonus.employeeDeposit || 0) + depositUI;
+          
+          return {
+            workerId,
+            baseBonusAmount: bonus.baseBonusAmount,
+            totalDaysWorked: bonus.totalDaysWorked || 0,
+            totalDaysAbsent: bonus.totalDaysAbsent,
+            totalPenalty: bonus.totalPenalty,
+            extraBonus: totalExtraBonus,
+            deposit: totalDeposit,
+            finalBonusAmount: Math.max(0, (bonus.baseBonusAmount || 0) - (bonus.totalPenalty || 0) + totalExtraBonus),
+            amountToGiveEmployee: Math.max(0, (bonus.baseBonusAmount || 0) - (bonus.totalPenalty || 0) + totalExtraBonus - totalDeposit),
+            advanceBalanceAtSave: getWorkerAdvance(bonus.worker)
+          };
+        });
 
-              console.log('Saving records', { recordsCount: records.length });
+        console.log('Saving records', { recordsCount: records.length });
 
-              await bonusApi.saveBonusHistory({
-                year: startDate.getFullYear(),
-                periodStart: startDate.toISOString().split('T')[0],
-                periodEnd: endDate.toISOString().split('T')[0],
-                records,
-                notes: `Saved on ${new Date().toLocaleDateString('en-IN')}`
-              });
+        await bonusApi.saveBonusHistory({
+          year: startDate.getFullYear(),
+          periodStart: startDate.toISOString().split('T')[0],
+          periodEnd: endDate.toISOString().split('T')[0],
+          records,
+          notes: `Saved on ${new Date().toLocaleDateString('en-IN')}`
+        });
 
         console.log('saveBonusHistory API returned');
         showToast(`Bonus report saved successfully${records.some(r => r.deposit && r.deposit > 0) ? ' and deposits recorded to advance.' : '!'}`);
@@ -370,12 +394,13 @@ export default function BonusScreen() {
       }
     };
 
-    const hasDeposits = bonuses.some(b => {
+    const hasChanges = bonuses.some(b => {
       const workerId = typeof (b as any).worker === 'object' ? (b as any).worker._id : b.worker;
-      return (getDepositAmount(workerId) || b.employeeDeposit || 0) > 0;
+      return (getDepositAmount(workerId) || b.employeeDeposit || 0) > 0 || 
+             (getExtraBonusAmount(workerId) || 0) > 0;
     });
 
-    const confirmMsg = `This will save the current bonus data to history${hasDeposits ? ' and record all deposits to the advance system' : ''}. After saving, this report will be locked and cannot be edited. Continue?`;
+    const confirmMsg = `This will save the current bonus data to history${hasChanges ? ' and record all deposits/extra bonuses' : ''}. After saving, this report will be locked and cannot be edited. Continue?`;
 
     if (Platform.OS === 'web') {
       if (confirm(confirmMsg)) {
@@ -426,11 +451,14 @@ export default function BonusScreen() {
 
   const getTotalBase = () => bonuses.reduce((sum, b) => sum + b.baseBonusAmount, 0);
   const getTotalPenalty = () => bonuses.reduce((sum, b) => sum + b.totalPenalty, 0);
+  
+  // Single getTotalFinal function (fixed duplicate declaration)
   const getTotalFinal = () => bonuses.reduce((sum, b) => {
     const workerId = typeof (b as any).worker === 'object' ? (b as any).worker._id : b.worker;
     const base = (b.amountToGiveEmployee || b.finalBonusAmount) || 0;
-    const deducted = getDepositAmount(workerId) || 0;
-    return sum + Math.max(0, base - deducted);
+    const extraBonusUI = getExtraBonusAmount(workerId) || 0;
+    const depositUI = getDepositAmount(workerId) || 0;
+    return sum + Math.max(0, base + extraBonusUI - depositUI);
   }, 0);
 
   const onStartDateChange = (event: any, selectedDate?: Date) => {
@@ -490,6 +518,10 @@ export default function BonusScreen() {
     setEndYear(endDate.getFullYear().toString());
     setShowDateModal(true);
   };
+
+  function handleAddExtraBonus(event: GestureResponderEvent): void {
+    throw new Error('Function not implemented.');
+  }
 
   return (
     <View className="flex-1 bg-gray-50">
@@ -565,7 +597,7 @@ export default function BonusScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={true}>
           <View>
             {/* Header (increased minWidth & clearer labels with dividers) */}
-            <View className="bg-gray-200 px-2 py-2 flex-row border-b border-gray-300" style={{ minWidth: 1100 }}>
+            <View className="bg-gray-200 px-2 py-2 flex-row border-b border-gray-300" style={{ minWidth: 1200 }}>
               <Text className="w-8 px-2 text-xs font-bold text-gray-700 border-r border-gray-300">#</Text>
               <Text className="w-36 px-2 text-xs font-bold text-gray-700 border-r border-gray-300">Name</Text>
               <Text className="w-24 px-2 text-xs font-bold text-gray-700 text-right border-r border-gray-300">Base</Text>
@@ -580,11 +612,11 @@ export default function BonusScreen() {
 
             {/* Rows */}
             {loading ? (
-              <View className="bg-white p-8 items-center" style={{ minWidth: 1100 }}>
+              <View className="bg-white p-8 items-center" style={{ minWidth: 1200 }}>
                 <Text className="text-gray-500">Loading...</Text>
               </View>
             ) : bonuses.length === 0 ? (
-              <View className="bg-white p-8 items-center" style={{ minWidth: 1100 }}>
+              <View className="bg-white p-8 items-center" style={{ minWidth: 1200 }}>
                 <Ionicons name="gift-outline" size={40} color="#9CA3AF" />
                 <Text className="text-gray-500 mt-2 text-sm">No bonuses calculated</Text>
                 <Text className="text-gray-400 text-xs">Tap Calculate button</Text>
@@ -592,11 +624,17 @@ export default function BonusScreen() {
             ) : (
               bonuses.map((bonus, index) => {
                 const workerId = typeof (bonus as any).worker === 'object' ? (bonus as any).worker._id : bonus.worker;
+                const extraBonusUI = getExtraBonusAmount(workerId) || 0;
+                const depositUI = getDepositAmount(workerId) || 0;
+                const totalExtraBonus = (bonus.extraBonus || 0) + extraBonusUI;
+                const totalDeposit = (bonus.employeeDeposit || 0) + depositUI;
+                const finalAmount = Math.max(0, (bonus.amountToGiveEmployee || bonus.finalBonusAmount) + extraBonusUI - depositUI);
+                
                 return (
                 <View 
-                  key={bonus._id}
+                  key={bonus._id || `temp-${index}`}
                   className={`px-2 py-3 flex-row items-center border-b border-gray-200 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`} 
-                  style={{ minWidth: 1100 }}
+                  style={{ minWidth: 1200 }}
                 >
                   <Text className="w-8 px-2 text-xs text-gray-500 border-r border-gray-100">{index + 1}</Text>
                   <View className="w-36 px-2 border-r border-gray-100">
@@ -607,43 +645,47 @@ export default function BonusScreen() {
                   <Text className="w-20 px-2 text-sm text-gray-600 text-right border-r border-gray-100">{bonus.totalDaysAbsent}d</Text>
                   <Text className="w-20 px-2 text-sm text-red-600 text-right border-r border-gray-100">-₹{bonus.totalPenalty.toLocaleString()}</Text>
                   <Text className="w-28 px-2 text-sm text-orange-600 text-right border-r border-gray-100">₹{(bonus.currentAdvanceBalance || getWorkerAdvance(bonus.worker)).toLocaleString()}</Text>
-                  <Text className="w-20 px-2 text-sm text-green-600 text-right font-medium border-r border-gray-100">{bonus.extraBonus > 0 ? `+₹${bonus.extraBonus}` : '0'}</Text>
-                  <View className="w-24 px-1 border-r border-gray-100">
+                  <View className="w-20 px-1 border-r border-gray-100">
+                    <TextInput
+                      value={extraBonuses[workerId] || ''}
+                      onChangeText={(val) => handleExtraBonusChange(workerId, val)}
+                      placeholder="0"
+                      keyboardType="numeric"
+                      className="bg-green-50 border border-green-200 rounded px-2 py-1 text-center text-xs"
+                    />
+                    {totalExtraBonus > 0 && (
+                      <Text className="text-xs text-green-600 text-center mt-1">+₹{totalExtraBonus}</Text>
+                    )}
+                  </View>
+                  <View className="w-20 px-1 border-r border-gray-100">
                     <TextInput
                       value={deposits[workerId] || ''}
                       onChangeText={(val) => handleDepositChange(workerId, val)}
                       placeholder="0"
                       keyboardType="numeric"
-                      className="bg-green-50 border border-green-200 rounded px-2 py-1 text-center text-xs"
+                      className="bg-purple-50 border border-purple-200 rounded px-2 py-1 text-center text-xs"
                     />
+                    {totalDeposit > 0 && (
+                      <Text className="text-xs text-purple-600 text-center mt-1">-₹{totalDeposit}</Text>
+                    )}
                   </View>
-                  <Text className="w-28 px-2 text-sm text-blue-700 text-right font-bold border-r border-gray-100">₹{(Math.max(0, (bonus.amountToGiveEmployee || bonus.finalBonusAmount) - getDepositAmount(workerId)).toLocaleString())}</Text>
-                  <View className="w-48 px-2 flex-row justify-center space-x-3 ml-4" style={{ flexShrink: 0 }}>
-                    <TouchableOpacity 
-                      onPress={(e) => { e.stopPropagation(); setSelectedBonus(bonus); setShowExtraBonusModal(true); }} 
-                      className="bg-green-100 px-3 py-1 rounded"
-                    >
-                      <Text className="text-green-600 text-xs">+Bonus</Text>
-                    </TouchableOpacity>
-
-                  </View>
+                  <Text className="w-28 px-2 text-sm text-blue-700 text-right font-bold border-r border-gray-100">₹{finalAmount.toLocaleString()}</Text>
                 </View>
               )})
             )}
 
             {/* Footer */}
             {bonuses.length > 0 && (
-              <View className="bg-gray-200 px-2 py-2 flex-row border-t border-gray-400" style={{ minWidth: 900 }}>
+              <View className="bg-gray-200 px-2 py-2 flex-row border-t border-gray-400" style={{ minWidth: 1200 }}>
                 <Text className="w-8 text-xs text-gray-400"></Text>
                 <Text className="w-32 text-xs font-bold text-gray-700">TOTAL ({bonuses.length})</Text>
                 <Text className="w-16 text-sm font-bold text-gray-700 text-right">₹{getTotalBase().toLocaleString()}</Text>
                 <Text className="w-14 text-xs text-gray-400 text-right">-</Text>
                 <Text className="w-18 text-sm font-bold text-red-600 text-right">-₹{getTotalPenalty().toLocaleString()}</Text>
                 <Text className="w-18 text-xs text-gray-400 text-right">-</Text>
-                <Text className="w-18 text-xs text-gray-400 text-right">-</Text>
-                <Text className="w-24 text-xs text-gray-400 text-right">-</Text>
+                <Text className="w-18 text-sm font-bold text-green-600 text-right">+₹{getTotalExtraBonus().toLocaleString()}</Text>
+                <Text className="w-20 text-sm font-bold text-purple-600 text-right">-₹{getTotalDeposit().toLocaleString()}</Text>
                 <Text className="w-24 text-sm font-bold text-blue-700 text-right">₹{getTotalFinal().toLocaleString()}</Text>
-                <View className="w-40" />
               </View>
             )}
           </View>
@@ -1023,58 +1065,6 @@ export default function BonusScreen() {
                 )}
               </ScrollView>
             )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* Quick Extra Bonus Modal */}
-      <Modal visible={showExtraBonusModal} transparent animationType="fade">
-        <View className="flex-1 bg-black/50 justify-center items-center px-4">
-          <View className="bg-white rounded-lg p-5 w-full max-w-sm">
-            <View className="flex-row justify-between items-center mb-4">
-              <View>
-                <Text className="text-lg font-bold text-green-600">Add Extra Bonus</Text>
-                <Text className="text-sm text-gray-500">{selectedBonus ? getWorkerName(selectedBonus.worker) : ''}</Text>
-              </View>
-              <TouchableOpacity onPress={() => { setShowExtraBonusModal(false); setExtraBonusAmount(''); }}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-
-            {selectedBonus && (
-              <View className="bg-gray-50 p-3 rounded-lg mb-3">
-                <View className="flex-row justify-between">
-                  <Text className="text-xs text-gray-500">Current Bonus</Text>
-                  <Text className="text-sm font-bold text-blue-600">₹{(selectedBonus.amountToGiveEmployee || selectedBonus.finalBonusAmount).toLocaleString()}</Text>
-                </View>
-                {selectedBonus.extraBonus > 0 && (
-                  <View className="flex-row justify-between mt-1">
-                    <Text className="text-xs text-gray-500">Previous Extra</Text>
-                    <Text className="text-xs text-green-600">+₹{selectedBonus.extraBonus.toLocaleString()}</Text>
-                  </View>
-                )}
-              </View>
-            )}
-
-            <Text className="text-gray-600 text-sm mb-1">Extra Bonus Amount (₹)</Text>
-            <TextInput 
-              value={extraBonusAmount} 
-              onChangeText={setExtraBonusAmount} 
-              placeholder="e.g., 500" 
-              keyboardType="numeric" 
-              className="border border-gray-300 rounded-lg px-4 py-3 mb-4" 
-            />
-
-            <TouchableOpacity 
-              onPress={async () => {
-                await handleAddExtraBonus();
-                setShowExtraBonusModal(false);
-              }} 
-              disabled={processingAction || !extraBonusAmount} 
-              className={`py-3 rounded-lg ${processingAction || !extraBonusAmount ? 'bg-gray-400' : 'bg-green-500'}`}
-            >
-              <Text className="text-white text-center font-semibold">{processingAction ? 'Adding...' : 'Add Extra Bonus'}</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>

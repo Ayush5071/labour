@@ -172,11 +172,19 @@ export const bonusApi = {
   updateBonus: (id: string, data: { finalBonusAmount: number; advanceDeduction: number }) =>
     api.put(`/bonus/${id}`, data),
   
-  addExtraBonus: (bonusId: string, extraAmount: number, notes?: string) =>
-    api.post(`/bonus/add-extra-bonus/${bonusId}`, { extraAmount, notes }),
+  addExtraBonus: (bonusId: string, amount: number, notes?: string, workerContext?: any) => 
+    api.post(`/bonus/add-extra-bonus/${bonusId}`, { 
+      extraAmount: amount, 
+      notes,
+      ...workerContext 
+    }),
   
-  addEmployeeDeposit: (bonusId: string, depositAmount: number, notes?: string) =>
-    api.post(`/bonus/add-employee-deposit/${bonusId}`, { depositAmount, notes }),
+  addEmployeeDeposit: (bonusId: string, amount: number, notes?: string, workerContext?: any) => 
+    api.post(`/bonus/add-employee-deposit/${bonusId}`, { 
+      depositAmount: amount, 
+      notes,
+      ...workerContext 
+    }),
   
   pay: (id: string, amountPaid?: number) =>
     api.post(`/bonus/pay/${id}`, { amountPaid }),
