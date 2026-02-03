@@ -1,17 +1,25 @@
 import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, RefreshControl } from 'react-native';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { vaultApi } from '../../services/api';
 import { Transaction, VaultSummary } from '../../types';
 
-const VAULT_PASSWORD = '123456';
-
 export default function VaultScreen() {
+  const [hasPassword, setHasPassword] = useState(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [passwordError, setPasswordError] = useState('');
+  const [initLoading, setInitLoading] = useState(true);
 
+  // Auth Inputs
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // Password Management
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [masterPasskey, setMasterPasskey] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  
+  // Data
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState<VaultSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,6 +32,10 @@ export default function VaultScreen() {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
 
+  useEffect(() => {
+    checkStatus();
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       if (isUnlocked) {
@@ -32,15 +44,51 @@ export default function VaultScreen() {
     }, [isUnlocked])
   );
 
-  const handleUnlock = () => {
-    if (passwordInput === VAULT_PASSWORD) {
-      setIsUnlocked(true);
-      setPasswordError('');
-      setPasswordInput('');
-      fetchData();
-    } else {
-      setPasswordError('Incorrect password');
-      setPasswordInput('');
+  const checkStatus = async () => {
+    try {
+      const res = await vaultApi.getStatus();
+      setHasPassword(res.data.hasPassword);
+    } catch (error) {
+      console.log('Error checking vault status', error);
+    } finally {
+      setInitLoading(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    try {
+      setLoading(true);
+      const res = await vaultApi.verifyPassword(authPassword);
+      if (res.data.success) {
+        setIsUnlocked(true);
+        setAuthError('');
+        setAuthPassword('');
+        fetchData();
+      } else {
+        setAuthError('Incorrect password');
+        setAuthPassword('');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.response?.data?.error || error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetPassword = async () => {
+    if (!masterPasskey || !newPassword) {
+      Alert.alert('Error', 'Please fill all fields');
+      return;
+    }
+    try {
+      await vaultApi.setPassword(masterPasskey, newPassword);
+      Alert.alert('Success', 'Password updated successfully');
+      setHasPassword(true);
+      setShowPasswordModal(false);
+      setMasterPasskey('');
+      setNewPassword('');
+    } catch (error: any) {
+      Alert.alert('Error', error.response?.data?.error || error.message);
     }
   };
 
@@ -90,7 +138,7 @@ export default function VaultScreen() {
       setSaving(false);
     }
   };
-
+   
   const handleDelete = async (id: string) => {
     Alert.alert('Delete', 'Are you sure you want to delete this transaction?', [
       { text: 'Cancel', style: 'cancel' },
@@ -115,53 +163,176 @@ export default function VaultScreen() {
     setNote('');
   };
 
-  // Password Screen
-  if (!isUnlocked) {
+  if (initLoading) {
     return (
-      <View className="flex-1 bg-gray-50 justify-center items-center px-6">
-        <View className="bg-white p-6 rounded-2xl shadow-lg w-full max-w-sm">
-          <View className="items-center mb-6">
-            <View className="w-16 h-16 bg-blue-100 rounded-full items-center justify-center mb-3">
-              <Ionicons name="lock-closed" size={32} color="#3B82F6" />
-            </View>
-            <Text className="text-xl font-bold text-gray-800">Vault Locked</Text>
-            <Text className="text-sm text-gray-500 text-center mt-1">Enter password to access vault</Text>
-          </View>
+      <View className="flex-1 bg-white items-center justify-center">
+        <Text>Loading Vault...</Text>
+      </View>
+    );
+  }
 
+  // Handle Initial Setup (No Password)
+  if (!hasPassword) {
+    return (
+      <View className="flex-1 bg-gray-50 flex items-center justify-center p-6">
+        <View className="bg-white p-6 rounded-2xl shadow-sm w-full max-w-sm">
+          <Text className="text-xl font-bold text-gray-900 mb-2">Setup Vault Protection</Text>
+          <Text className="text-gray-500 mb-6">Set a password to secure your company vault.</Text>
+          
+          <Text className="text-xs font-medium text-gray-500 mb-1 ml-1">Master Passkey</Text>
           <TextInput
-            value={passwordInput}
-            onChangeText={setPasswordInput}
-            placeholder="Enter Password"
+            value={masterPasskey}
+            onChangeText={setMasterPasskey}
+            placeholder="Enter master passkey"
             secureTextEntry
-            keyboardType="numeric"
-            className="border border-gray-300 rounded-lg px-4 py-3 text-center text-lg tracking-widest"
-            onSubmitEditing={handleUnlock}
+            className="border border-gray-300 rounded-lg px-4 py-3 mb-4"
           />
 
-          {passwordError ? (
-            <Text className="text-red-500 text-sm text-center mt-2">{passwordError}</Text>
-          ) : null}
+          <Text className="text-xs font-medium text-gray-500 mb-1 ml-1">New Vault Password</Text>
+          <TextInput
+            value={newPassword}
+            onChangeText={setNewPassword}
+            placeholder="Create password"
+            keyboardType="numeric"
+            secureTextEntry
+            className="border border-gray-300 rounded-lg px-4 py-3 mb-6"
+          />
 
-          <TouchableOpacity
-            onPress={handleUnlock}
-            className="bg-blue-500 py-3 rounded-lg mt-4"
-          >
-            <Text className="text-white text-center font-semibold text-lg">Unlock</Text>
+          <TouchableOpacity onPress={handleSetPassword} className="bg-blue-600 py-3 rounded-lg">
+             <Text className="text-white text-center font-bold">Set Password</Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   }
 
+  // Locked Screen
+  if (!isUnlocked) {
+    return (
+      <View className="flex-1 bg-gray-50 flex items-center justify-center p-6">
+        <View className="bg-white p-6 rounded-2xl shadow-lg w-full max-w-sm">
+          <View className="items-center mb-6">
+            <View className="w-16 h-16 bg-blue-100 rounded-full items-center justify-center mb-3">
+              <Ionicons name="lock-closed" size={32} color="#3B82F6" />
+            </View>
+            <Text className="text-xl font-bold text-gray-800">Vault Locked</Text>
+          </View>
+
+          <TextInput
+            value={authPassword}
+            onChangeText={setAuthPassword}
+            placeholder="Enter Password"
+            secureTextEntry
+            keyboardType="numeric"
+            className="border border-gray-300 rounded-lg px-4 py-3 text-center text-lg tracking-widest mb-2"
+            onSubmitEditing={handleUnlock}
+          />
+
+          {authError ? (
+            <Text className="text-red-500 text-sm text-center mb-2">{authError}</Text>
+          ) : null}
+
+          <TouchableOpacity
+            onPress={handleUnlock}
+            className="bg-blue-500 py-3 rounded-lg mt-2"
+          >
+            <Text className="text-white text-center font-semibold text-lg">{loading ? 'Checking...' : 'Unlock'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => setShowPasswordModal(true)} className="mt-6 pt-4 border-t border-gray-100">
+             <Text className="text-center text-gray-400 text-sm">Forgot Password?</Text>
+          </TouchableOpacity>
+
+          {/* Change Password Modal (Reused for Forgot Password) */}
+          <Modal visible={showPasswordModal} transparent animationType="slide">
+             <View className="flex-1 bg-black/50 justify-center p-6">
+               <View className="bg-white rounded-xl p-6">
+                 <Text className="text-lg font-bold mb-4">Reset Vault Password</Text>
+                 
+                 <Text className="text-xs text-gray-500 mb-1">Master Passkey</Text>
+                 <TextInput
+                    value={masterPasskey}
+                    onChangeText={setMasterPasskey}
+                    placeholder="Enter master passkey"
+                    secureTextEntry
+                    className="border border-gray-300 rounded-lg px-3 py-2 mb-3"
+                 />
+
+                 <Text className="text-xs text-gray-500 mb-1">New Password</Text>
+                 <TextInput
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    placeholder="Enter new password"
+                    secureTextEntry
+                    keyboardType="numeric"
+                    className="border border-gray-300 rounded-lg px-3 py-2 mb-4"
+                 />
+                 
+                 <View className="flex-row gap-3">
+                   <TouchableOpacity onPress={() => setShowPasswordModal(false)} className="flex-1 py-3 bg-gray-100 rounded-lg">
+                      <Text className="text-center text-gray-600 font-medium">Cancel</Text>
+                   </TouchableOpacity>
+                   <TouchableOpacity onPress={handleSetPassword} className="flex-1 py-3 bg-blue-600 rounded-lg">
+                      <Text className="text-center text-white font-medium">Update</Text>
+                   </TouchableOpacity>
+                 </View>
+               </View>
+             </View>
+          </Modal>
+        </View>
+      </View>
+    );
+  }
+
+  // Unlocked Content
   return (
     <View className="flex-1 bg-gray-50">
-      {/* Lock Button */}
-      <TouchableOpacity
-        onPress={handleLock}
-        className="absolute top-3 right-3 z-10 bg-gray-200 p-2 rounded-full"
-      >
-        <Ionicons name="lock-closed" size={18} color="#6B7280" />
-      </TouchableOpacity>
+      {/* Header Actions */}
+      <View className="flex-row justify-end px-3 pt-2">
+         <TouchableOpacity onPress={() => setShowPasswordModal(true)} className="mr-3 p-2 bg-gray-200 rounded-full">
+            <Ionicons name="key-outline" size={18} color="#4B5563" />
+         </TouchableOpacity>
+         <TouchableOpacity onPress={handleLock} className="p-2 bg-gray-200 rounded-full">
+            <Ionicons name="lock-closed" size={18} color="#4B5563" />
+         </TouchableOpacity>
+      </View>
+
+      {/* Change Password Modal (For Unlocked State too) */}
+      <Modal visible={showPasswordModal} transparent animationType="slide">
+          <View className="flex-1 bg-black/50 justify-center p-6">
+            <View className="bg-white rounded-xl p-6">
+              <Text className="text-lg font-bold mb-4">Change Vault Password</Text>
+              
+              <Text className="text-xs text-gray-500 mb-1">Master Passkey</Text>
+              <TextInput
+                value={masterPasskey}
+                onChangeText={setMasterPasskey}
+                placeholder="Enter master passkey"
+                secureTextEntry
+                className="border border-gray-300 rounded-lg px-3 py-2 mb-3"
+              />
+
+              <Text className="text-xs text-gray-500 mb-1">New Password</Text>
+              <TextInput
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="Enter new password"
+                secureTextEntry
+                keyboardType="numeric"
+                className="border border-gray-300 rounded-lg px-3 py-2 mb-4"
+              />
+              
+              <View className="flex-row gap-3">
+                <TouchableOpacity onPress={() => setShowPasswordModal(false)} className="flex-1 py-3 bg-gray-100 rounded-lg">
+                  <Text className="text-center text-gray-600 font-medium">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleSetPassword} className="flex-1 py-3 bg-blue-600 rounded-lg">
+                  <Text className="text-center text-white font-medium">Update</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+      </Modal>
 
       {/* Summary Cards */}
       <View className="flex-row px-3 pt-3 space-x-2">

@@ -129,6 +129,22 @@ export const advanceApi = {
 
 // Vault/Transaction APIs
 export const vaultApi = {
+  // Password protection
+  getStatus: () =>
+    api.get('/vault/status'),
+
+  verifyPassword: (password: string) =>
+    api.post('/vault/verify', { password }),
+
+  setPassword: (passkey: string, newPassword: string) =>
+    api.post('/vault/password', { passkey, newPassword }),
+
+  getCompanyName: () =>
+    api.get('/vault/company-name'),
+
+  setCompanyName: (companyName: string) =>
+    api.post('/vault/company-name', { companyName }),
+
   getAll: (params?: { type?: string; startDate?: string; endDate?: string; category?: string }) =>
     api.get('/vault', { params }),
   
