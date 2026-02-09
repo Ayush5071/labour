@@ -4,6 +4,19 @@ import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { vaultApi } from '../../services/api';
 import { Transaction, VaultSummary } from '../../types';
+import RNPickerSelect from 'react-native-picker-select';
+
+// Format date to DD-MM-YYYY
+const formatDate = (dateString: string) => {
+  const d = new Date(dateString);
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+};
+
+// These names match the allowed `person` enum on the server model
+const DEFAULT_PERSON_NAMES = ['Biswajit -1', 'Biswajit-2', 'Rajkumar', 'Manoj'];
 
 export default function VaultScreen() {
   const [hasPassword, setHasPassword] = useState(false);
@@ -31,6 +44,13 @@ export default function VaultScreen() {
   const [type, setType] = useState<'income' | 'expense'>('income');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
+  const [person, setPerson] = useState('');
+
+  // Persons for balance tracking (populated from server summary)
+  const [persons, setPersons] = useState<{ label: string; value: string }[]>([]);
+
+  // Balance cards
+  const [balanceCards, setBalanceCards] = useState<any[]>([]);
 
   useEffect(() => {
     checkStatus();
@@ -107,6 +127,19 @@ export default function VaultScreen() {
       ]);
       setTransactions(transRes.data);
       setSummary(summaryRes.data);
+
+      // Server-provided balances (may be empty). Merge with DEFAULT_PERSON_NAMES so the app shows the enum set from the model even if no transactions exist.
+      const serverBalances: { [key: string]: number } = summaryRes.data?.personBalances || {};
+      const serverNames = Object.keys(serverBalances);
+
+      // Merge server names with defaults, preserving server values where present
+      const mergedNames = Array.from(new Set([ ...DEFAULT_PERSON_NAMES, ...serverNames ]));
+
+      setPersons(mergedNames.map(p => ({ label: p, value: p })));
+
+      const cards = mergedNames.map(name => ({ name, balance: serverBalances[name] || 0 }));
+      setBalanceCards(cards);
+
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to fetch data');
     } finally {
@@ -127,6 +160,7 @@ export default function VaultScreen() {
         type,
         amount: parseFloat(amount),
         note: note.trim(),
+        person: person || undefined,
       });
       Alert.alert('Success', 'Transaction added');
       setShowModal(false);
@@ -161,6 +195,7 @@ export default function VaultScreen() {
     setType('income');
     setAmount('');
     setNote('');
+    setPerson('');
   };
 
   if (initLoading) {
@@ -351,6 +386,25 @@ export default function VaultScreen() {
         <Text className="text-white/80 text-xs">Net Balance</Text>
         <Text className="text-white text-2xl font-bold">₹{(summary?.balance || 0).toLocaleString()}</Text>
       </View>
+      
+      {/* Person Balances - Horizontal Scroll */}
+      {balanceCards.length > 0 && (
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          className="mt-2 pl-3"
+        >
+          {balanceCards.map((card, idx) => (
+             <View key={idx} className="bg-white p-2 rounded-lg mr-2 w-28 border border-gray-100 shadow-sm h-16 items-start justify-center">
+                <Text className="text-[10px] text-gray-500 font-medium mb-0.5">{card.name}</Text>
+                <Text className={`text-base font-semibold ${card.balance >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  {card.balance >= 0 ? '+' : ''}₹{card.balance.toLocaleString()}
+                </Text>
+             </View>
+          ))}
+          <View className="w-3" />
+        </ScrollView>
+      )}
 
       {/* Transaction List */}
       <Text className="px-3 mt-3 mb-2 text-gray-500 text-sm">Recent Transactions</Text>
@@ -387,8 +441,11 @@ export default function VaultScreen() {
                   </View>
                   <View className="ml-2 flex-1">
                     <Text className="font-medium text-gray-800 text-sm" numberOfLines={1}>{tx.note}</Text>
+                    {tx.person ? (
+                      <Text className="text-xs text-blue-500 mb-0.5">{tx.person}</Text>
+                    ) : null}
                     <Text className="text-xs text-gray-400">
-                      {new Date(tx.date).toLocaleDateString('en-IN')}
+                      {formatDate(tx.date)}
                     </Text>
                   </View>
                 </View>
@@ -453,6 +510,30 @@ export default function VaultScreen() {
               keyboardType="numeric"
               className="border border-gray-300 rounded-lg px-4 py-3 mb-3 text-lg"
             />
+
+            {/* Person Selection - Dropdown */}
+            <View className="mb-3 border border-gray-300 rounded-lg overflow-hidden">
+               <RNPickerSelect
+                 onValueChange={(value) => setPerson(value)}
+                 items={persons}
+                 value={person}
+                 placeholder={{ label: 'Select Person (Optional)', value: null }}
+                 style={{
+                    inputIOS: {
+                      fontSize: 16,
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      color: 'black',
+                    },
+                    inputAndroid: {
+                      fontSize: 16,
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                      color: 'black',
+                    },
+                 }}
+               />
+            </View>
 
             {/* Note */}
             <TextInput

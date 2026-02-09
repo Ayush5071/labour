@@ -98,6 +98,7 @@ export interface Transaction {
   amount: number;
   category?: string;
   note: string;
+  person?: string;
   date: string;
   createdAt: string;
 }

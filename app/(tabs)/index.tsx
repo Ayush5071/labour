@@ -14,6 +14,8 @@ export default function WorkersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('name');
+  const [showInactive, setShowInactive] = useState(false);
+
 
   // Company name state
   const [companyName, setCompanyName] = useState('');
@@ -22,7 +24,8 @@ export default function WorkersScreen() {
   const fetchWorkers = async () => {
     try {
       setLoading(true);
-      const response = await workersApi.getAll(true);
+      // When showInactive is true, fetch all workers (no filter); otherwise fetch only active workers
+      const response = await workersApi.getAll(showInactive ? undefined : true);
       setWorkers(response.data);
 
       // load company name
@@ -73,6 +76,27 @@ export default function WorkersScreen() {
     );
   };
 
+  const handleActivate = (id: string, name: string) => {
+    Alert.alert(
+      'Activate Worker',
+      `Do you want to activate ${name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Activate',
+          onPress: async () => {
+            try {
+              await workersApi.update(id, { isActive: true });
+              fetchWorkers();
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to activate worker');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const filteredWorkers = useMemo(() => {
     let result = [...workers];
 
@@ -96,7 +120,7 @@ export default function WorkersScreen() {
 
   const renderWorkerItem = ({ item }: { item: Worker }) => (
     <TouchableOpacity
-      className="bg-white mx-2 my-0.5 px-3 py-2 rounded-lg border border-gray-100 flex-row items-center justify-between shadow-sm"
+      className={`mx-2 my-0.5 px-3 py-2 rounded-lg border flex-row items-center justify-between shadow-sm ${item.isActive === false ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'}`}
       style={{ minHeight: 44 }}
       onPress={() => router.push(`/worker/details/${item._id}`)}
     >
@@ -105,7 +129,7 @@ export default function WorkersScreen() {
           <Text className="text-blue-600 font-bold text-xs">{item.name.charAt(0).toUpperCase()}</Text>
         </View>
         <View className="flex-1 justify-center">
-          <Text className="font-semibold text-gray-800 text-sm leading-tight" numberOfLines={1}>{item.name}</Text>
+          <Text className={`font-semibold ${item.isActive === false ? 'text-red-700' : 'text-gray-800'} text-sm leading-tight`} numberOfLines={1}>{item.name}</Text>
           <View className="flex-row items-center">
              <Text className="text-[10px] text-gray-500 mr-2">Rate: ₹{item.hourlyRate}</Text>
              {(item.advanceBalance || 0) > 0 && (
@@ -122,9 +146,15 @@ export default function WorkersScreen() {
         <TouchableOpacity className="p-1" onPress={() => router.push(`/worker/${item._id}`)}>
           <Ionicons name="pencil-outline" size={16} color="#6B7280" />
         </TouchableOpacity>
-        <TouchableOpacity className="p-1" onPress={() => handleDelete(item._id, item.name)}>
-          <Ionicons name="trash-outline" size={16} color="#EF4444" />
-        </TouchableOpacity>
+        {item.isActive === false ? (
+          <TouchableOpacity className="px-3 py-1 rounded bg-green-600" onPress={() => handleActivate(item._id, item.name)}>
+            <Text className="text-white text-xs">Activate</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity className="p-1" onPress={() => handleDelete(item._id, item.name)}>
+            <Ionicons name="trash-outline" size={16} color="#EF4444" />
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );

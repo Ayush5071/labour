@@ -86,7 +86,19 @@ export default function ReportsScreen() {
     setTimeout(() => setShowSuccessToast(false), 3000);
   };
 
-  const formatDateForApi = (date: Date) => date.toISOString().split('T')[0];
+  const formatDateForApi = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const getExclusiveApiEndDate = (date: Date) => {
+    const prevDate = new Date(date);
+    prevDate.setDate(prevDate.getDate() - 1);
+    return formatDateForApi(prevDate);
+  };
+  
   const formatDate = (date: Date | null) => date ? date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 
   const validateDate = (day: string, month: string, year: string): Date | null => {
@@ -110,7 +122,7 @@ export default function ReportsScreen() {
       setLoading(true);
       const reportRes = await reportApi.getAllWorkersSummary({ 
         startDate: formatDateForApi(startDate), 
-        endDate: formatDateForApi(endDate) 
+        endDate: getExclusiveApiEndDate(endDate) 
       });
       const reportData = reportRes.data.report || [];
       setReport(reportData);
@@ -192,13 +204,13 @@ export default function ReportsScreen() {
 
         response = await reportApi.exportWorkSummaryWithRecords({
           startDate: formatDateForApi(startDate),
-          endDate: formatDateForApi(endDate),
+          endDate: getExclusiveApiEndDate(endDate),
           records
         });
       } else {
         response = await reportApi.exportWorkSummaryExcel({ 
           startDate: formatDateForApi(startDate), 
-          endDate: formatDateForApi(endDate) 
+          endDate: getExclusiveApiEndDate(endDate) 
         });
       }
 
@@ -257,7 +269,7 @@ export default function ReportsScreen() {
 
               await reportApi.saveSalaryHistory({
                 periodStart: formatDateForApi(startDate),
-                periodEnd: formatDateForApi(endDate),
+                periodEnd: getExclusiveApiEndDate(endDate),
                 records,
                 notes: `Saved on ${new Date().toLocaleDateString('en-IN')}`
               });

@@ -151,7 +151,7 @@ export const vaultApi = {
   getSummary: (params?: { startDate?: string; endDate?: string }) =>
     api.get('/vault/summary', { params }),
   
-  create: (data: { type: 'income' | 'expense'; amount: number; category?: string; note: string; date?: string }) =>
+  create: (data: { type: 'income' | 'expense'; amount: number; category?: string; note: string; date?: string; person?: string }) =>
     api.post('/vault', data),
   
   update: (id: string, data: any) =>
